@@ -8,8 +8,11 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <print>
 #include <span>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 #include <stdlib.h>
@@ -23,7 +26,7 @@ namespace fs = std::filesystem;
 const char DFID_ENV_NAME[] = "FUZZEL_DESKTOP_FILE_ID";
 
 
-int raiseError(const char* operation, int rc)
+int raiseError(const std::string_view operation, int rc)
 {
     throw std::system_error(rc, std::system_category(),
                             std::format("Failed to {}", operation));
@@ -32,9 +35,6 @@ int raiseError(const char* operation, int rc)
 
 void run(std::span<const char*> args)
 {
-    // Get current working directory
-    const fs::path cwd = fs::current_path();
-
     // Determine app name
     std::string appName;
     if (const char* dfid = std::getenv(DFID_ENV_NAME)) {
@@ -65,11 +65,14 @@ void run(std::span<const char*> args)
     const std::string unitName =
         std::format("app{}-{}@{:016x}.service", dashDE, appName, randU64);
 
+    // Get current working directory
+    const fs::path cwd = fs::current_path();
+
     // Call user systemd via D-Bus. Our call will be equivalent to:
     //
     //   systemd-run --user --unit=${unitName} --description=${appName} --service-type=exec
     //     --property=ExitType=cgroup --same-dir --slice=app-graphical.slice --collect
-    //     --no-block --quiet -- ${argv[1:]}
+    //     --quiet -- ${argv[1:]}
 
     DBus bus = DBus::defaultUserBus();
     DBusMessage req = bus.createMethodCall(
@@ -113,12 +116,41 @@ void run(std::span<const char*> args)
 
     req.append("a(sa(sv))", nullptr); // 'aux' arg is unused
 
-    // Call systemd, ignoring response
-    bus.call(req);
+    // Set up D-Bus signal handlers so we get to know about the result of starting the job
+
+    const char* jobPath{};
+    std::string jobResult;
+
+    auto onJobRemoved =
+            [&jobPath, &jobResult](DBusMessage& msg) {
+                const char *sigPath{}, *sigResult{};
+                msg.read("uoss", nullptr, &sigPath, nullptr, &sigResult);
+                if (std::strcmp(jobPath, sigPath) == 0) {
+                    jobResult = sigResult;
+                }
+            };
+    bus.matchSignal("org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                    "org.freedesktop.systemd1.Manager", "JobRemoved", std::move(onJobRemoved));
+
+    bus.matchSignal("org.freedesktop.DBus.Local", nullptr,
+                    "org.freedesktop.DBus.Local", "Disconnected",
+                    [&jobResult](DBusMessage&) { jobResult = "disconnected"; });
+
+    // Make the StartTransientUnit D-Bus call to systemd
+    DBusMessage resp = bus.call(req);
+    resp.read("o", &jobPath);
+
+    // Wait for a signal handler to fire
+    do {
+        bus.processAndWait();
+    } while (jobResult.empty());
+
+    if (jobResult != "done") {
+        throw std::runtime_error(std::format("Failed to start app: {}", jobResult));
+    }
 }
 
 } // namespace
-
 
 
 int main(int argc, char* argv[])
