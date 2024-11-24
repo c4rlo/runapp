@@ -5,6 +5,7 @@
 #include <format>
 #include <print>
 #include <stdexcept>
+#include <utility>
 
 #include <systemd/sd-bus.h>
 
@@ -22,8 +23,15 @@ void check(int rc, const char* operation)
 }
 
 
-DBus::DBus(sd_bus* bus)
+DBus::DBus(sd_bus* bus) noexcept
 : d_bus(bus)
+{
+}
+
+DBus::DBus(DBus&& other) noexcept
+: d_bus(std::exchange(other.d_bus, nullptr)),
+  d_handlers(std::exchange(other.d_handlers, {})),
+  d_exception(std::exchange(other.d_exception, {}))
 {
 }
 
@@ -68,8 +76,9 @@ void DBus::matchSignalAsync(
         MessageHandler handler)
 {
     d_handlers.emplace_front(std::move(handler), this, false);
-    check(sd_bus_match_signal_async(d_bus, nullptr, sender, path, interface, member, handleMessage,
-                                    nullptr, &d_handlers.front()),
+    check(sd_bus_match_signal_async(d_bus, nullptr, sender, path, interface,
+                                    member, handleMessage, nullptr,
+                                    &d_handlers.front()),
           "install D-Bus signal handler");
 }
 
@@ -144,8 +153,13 @@ int DBus::handleMessageImpl(sd_bus_message* m, HandlerData* h, sd_bus_error* ret
 }
 
 
-DBusMessage::DBusMessage(sd_bus_message* msg)
+DBusMessage::DBusMessage(sd_bus_message* msg) noexcept
 : d_msg(msg)
+{
+}
+
+DBusMessage::DBusMessage(DBusMessage&& other) noexcept
+: d_msg(std::exchange(other.d_msg, nullptr))
 {
 }
 
@@ -183,5 +197,6 @@ void DBusMessage::openContainer(char type, const char* contents)
 
 void DBusMessage::closeContainer()
 {
-    check(sd_bus_message_close_container(d_msg), "build D-Bus message (close container)");
+    check(sd_bus_message_close_container(d_msg),
+          "build D-Bus message (close container)");
 }

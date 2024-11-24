@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <optional>
 #include <print>
 #include <span>
 #include <stdexcept>
@@ -15,15 +16,15 @@
 #include <string_view>
 #include <system_error>
 
-#include <stdlib.h>
 #include <sys/random.h>
+#include <unistd.h>
 
 
 namespace {
 
 namespace fs = std::filesystem;
 
-const char DFID_ENV_NAME[] = "FUZZEL_DESKTOP_FILE_ID";
+const char FUZZEL_DFID_ENV[] = "FUZZEL_DESKTOP_FILE_ID";
 
 
 int raiseError(const std::string_view operation, int rc)
@@ -33,25 +34,8 @@ int raiseError(const std::string_view operation, int rc)
 }
 
 
-void run(std::span<const char*> args)
+void run(DBus& bus, const std::string& appName, std::span<const char*> args)
 {
-    // Determine app name
-    std::string appName;
-    if (const char* dfid = std::getenv(DFID_ENV_NAME)) {
-        const char ext[] = ".desktop";
-        const std::size_t extLen = sizeof(ext) - 1;
-        if (std::strlen(dfid) > extLen) {
-            const std::size_t dfidLen = std::strlen(dfid);
-            if (std::strcmp(dfid + dfidLen - extLen, ext) == 0) {
-                appName.assign(dfid, dfidLen - extLen);
-            }
-        }
-        ::unsetenv(DFID_ENV_NAME);
-    }
-    if (appName.empty()) {
-        appName = fs::path(args[0]).filename();
-    }
-
     // Determine systemd unit name
     std::uint64_t randU64;
     if (::getentropy(&randU64, sizeof randU64) != 0) {
@@ -74,7 +58,6 @@ void run(std::span<const char*> args)
     //     --property=ExitType=cgroup --same-dir --slice=app-graphical.slice --collect
     //     --quiet -- ${argv[1:]}
 
-    DBus bus = DBus::defaultUserBus();
     DBusMessage req = bus.createMethodCall(
             "org.freedesktop.systemd1",
             "/org/freedesktop/systemd1",
@@ -153,10 +136,45 @@ void run(std::span<const char*> args)
         bus.drive();
     } while (jobResult.empty());
 
-    if (jobResult != "done") {
-        throw std::runtime_error(
-                std::format("Failed to start app: {}", jobResult));
+    if (jobResult == "failed") {
+        throw std::runtime_error("startup failure");
     }
+    else if (jobResult != "done") {
+        throw std::runtime_error(jobResult);
+    }
+}
+
+void notifyError(DBus& bus, const std::string& desktopID, const std::string& errmsg)
+try {
+    DBusMessage req = bus.createMethodCall(
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+            "Notify");
+
+    // app_name=null, replaces_id=0, app_icon=null, summary=errmsg,
+    // body=null, actions=null
+    req.append("susssas", nullptr, 0, nullptr, errmsg.c_str(), nullptr, nullptr);
+
+    // hints
+    req.openContainer('a', "{sv}");
+    if (!desktopID.empty()) {
+        req.append("{sv}", "desktop-entry", "s", desktopID.c_str());
+    }
+    req.append("{sv}", "urgency", "y", 2);  // 2=critical
+    req.closeContainer();
+
+    // expire_timeout
+    req.append("i", 0);  // 0 means never expire
+
+    bool done = false;
+    bus.callAsync(req, [&done](DBusMessage&) { done = true; });
+    do {
+        bus.drive();
+    } while (!done);
+}
+catch (const std::exception& e) {
+    std::println("Failed to notify user of error: {}", e.what());
 }
 
 } // namespace
@@ -169,12 +187,40 @@ int main(int argc, char* argv[])
         return 2;
     }
 
+    std::string desktopID;
+    if (const char* dfid = std::getenv(FUZZEL_DFID_ENV)) {
+        const char ext[] = ".desktop";
+        const std::size_t extLen = sizeof(ext) - 1;
+        if (std::strlen(dfid) > extLen) {
+            const std::size_t dfidLen = std::strlen(dfid);
+            if (std::strcmp(dfid + dfidLen - extLen, ext) == 0) {
+                desktopID.assign(dfid, dfidLen - extLen);
+            }
+        }
+    }
+
+    std::string appName;
+    if (!desktopID.empty()) {
+        appName = desktopID;
+    }
+    else {
+        appName = fs::path(argv[1]).filename();
+    }
+
+    std::optional<DBus> bus;
     try {
-        run(std::span(const_cast<const char**>(&argv[1]), argc - 1));
+        bus.emplace(DBus::defaultUserBus());
+        run(*bus, appName,
+            std::span(const_cast<const char**>(&argv[1]), argc - 1));
         return 0;
     }
     catch (const std::exception& e) {
-        std::println(std::cerr, "{}", e.what());
+        const std::string errmsg =
+                std::format("Failed to start {}: {}", appName, e.what());
+        std::println(std::cerr, "{}", errmsg);
+        if (bus && !isatty(STDIN_FILENO)) {
+            notifyError(*bus, desktopID, errmsg);
+        }
         return 1;
     }
 }

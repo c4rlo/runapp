@@ -12,6 +12,7 @@ class DBus {
   public:
     using MessageHandler = std::function<void(DBusMessage&)>;
 
+    DBus(DBus&& other) noexcept;
     ~DBus();
 
     static DBus defaultUserBus();
@@ -34,7 +35,7 @@ class DBus {
     void drive();
 
   private:
-    explicit DBus(sd_bus* bus);
+    explicit DBus(sd_bus* bus) noexcept;
 
     void setException(std::exception_ptr e);
 
@@ -55,6 +56,7 @@ class DBus {
 
 class DBusMessage {
   public:
+    DBusMessage(DBusMessage&& other) noexcept;
     ~DBusMessage();
 
     void read(const char* types, ...);
@@ -64,7 +66,7 @@ class DBusMessage {
     void closeContainer();
 
   private:
-    explicit DBusMessage(sd_bus_message* msg);
+    explicit DBusMessage(sd_bus_message* msg) noexcept;
 
     sd_bus_message* d_msg;
 

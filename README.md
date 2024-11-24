@@ -49,11 +49,17 @@ make install
 
 Will compile a release version and install it (via `sudo`) as `/usr/local/bin/runapp`.
 
+## Current features
+
+- Fast
+- No dependencies beyond systemd
+- If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations
+- On error, if not run from interactive terminal, show desktop notification
+
 ## Missing features
 
 Most of the features on this list are implemented in `uwsm app`.
 
-- Error notifications via `org.freedesktop.Notifications` if non-interactive TTY
 - Unit name: enforce restricted character set and max length
 - Unit description: derive from `.desktop` file
   - For Fuzzel, would be made much easier (and more performant) with https://codeberg.org/dnkl/fuzzel/issues/292
