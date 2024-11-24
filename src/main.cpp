@@ -116,37 +116,46 @@ void run(std::span<const char*> args)
 
     req.append("a(sa(sv))", nullptr); // 'aux' arg is unused
 
-    // Set up D-Bus signal handlers so we get to know about the result of starting the job
+    // Set up D-Bus signal handlers so we get to know about the result of
+    // starting the job
 
-    const char* jobPath{};
-    std::string jobResult;
+    std::string jobPath, jobResult;
 
-    auto onJobRemoved =
-            [&jobPath, &jobResult](DBusMessage& msg) {
-                const char *sigPath{}, *sigResult{};
-                msg.read("uoss", nullptr, &sigPath, nullptr, &sigResult);
-                if (std::strcmp(jobPath, sigPath) == 0) {
-                    jobResult = sigResult;
-                }
-            };
-    bus.matchSignal("org.freedesktop.systemd1", "/org/freedesktop/systemd1",
-                    "org.freedesktop.systemd1.Manager", "JobRemoved", std::move(onJobRemoved));
+    auto onJobRemoved = [&jobPath, &jobResult](DBusMessage& msg) {
+        const char *sigPath{}, *sigResult{};
+        msg.read("uoss", nullptr, &sigPath, nullptr, &sigResult);
+        if (jobPath == sigPath) {
+            jobResult = sigResult;
+        }
+    };
+    bus.matchSignalAsync("org.freedesktop.systemd1",
+                         "/org/freedesktop/systemd1",
+                         "org.freedesktop.systemd1.Manager", "JobRemoved",
+                         std::move(onJobRemoved));
 
-    bus.matchSignal("org.freedesktop.DBus.Local", nullptr,
-                    "org.freedesktop.DBus.Local", "Disconnected",
-                    [&jobResult](DBusMessage&) { jobResult = "disconnected"; });
+    auto onDisconnected = [&jobResult](DBusMessage&) {
+        if (jobResult.empty()) {
+            jobResult = "disconnected";
+        }
+    };
+    bus.matchSignalAsync(
+        "org.freedesktop.DBus.Local", nullptr, "org.freedesktop.DBus.Local",
+        "Disconnected", std::move(onDisconnected));
 
-    // Make the StartTransientUnit D-Bus call to systemd
-    DBusMessage resp = bus.call(req);
-    resp.read("o", &jobPath);
+    auto onStartResponse = [&jobPath](DBusMessage &resp) {
+        const char *path{};
+        resp.read("o", &path);
+        jobPath = path;
+    };
+    bus.callAsync(req, std::move(onStartResponse));
 
-    // Wait for a signal handler to fire
     do {
-        bus.processAndWait();
+        bus.drive();
     } while (jobResult.empty());
 
     if (jobResult != "done") {
-        throw std::runtime_error(std::format("Failed to start app: {}", jobResult));
+        throw std::runtime_error(
+                std::format("Failed to start app: {}", jobResult));
     }
 }
 

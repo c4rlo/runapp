@@ -3,6 +3,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <format>
+#include <print>
 #include <stdexcept>
 
 #include <systemd/sd-bus.h>
@@ -13,16 +14,9 @@ namespace {
 void check(int rc, const char* operation)
 {
     if (rc < 0) {
-        throw std::system_error(rc, std::system_category(),
+        throw std::system_error(-rc, std::system_category(),
                                 std::format("Failed to {}", operation));
     }
-}
-
-int onSignal(sd_bus_message* m, void* userdata, sd_bus_error*)
-{
-    DBusMessage msg{sd_bus_message_ref(m)};
-    (*static_cast<DBus::SignalCallback*>(userdata))(msg);
-    return 0;
 }
 
 }
@@ -58,42 +52,94 @@ DBusMessage DBus::createMethodCall(
     return DBusMessage(msg);
 }
 
-DBusMessage DBus::call(const DBusMessage& message)
+void DBus::callAsync(const DBusMessage& message, MessageHandler handler)
 {
-    sd_bus_message* reply{};
-    sd_bus_error error{};
-    if (int rc = sd_bus_call(d_bus, message.d_msg, 0, &error, &reply); rc < 0) {
-        const std::string exceptionMsg =
-                std::format("D-Bus call failed: {}", error.message);
-        sd_bus_error_free(&error);
-        throw std::runtime_error(exceptionMsg);
-    }
-    return DBusMessage(reply);
+    d_handlers.emplace_front(std::move(handler), this, true);
+    check(sd_bus_call_async(d_bus, nullptr, message.d_msg, handleMessage,
+                            &d_handlers.front(), 0),
+          "install D-Bus method response handler");
 }
 
-void DBus::matchSignal(
+void DBus::matchSignalAsync(
         const char* sender,
         const char* path,
         const char* interface,
         const char* member,
-        SignalCallback callback)
+        MessageHandler handler)
 {
-    d_callbacks.push_back(std::make_unique<SignalCallback>(std::move(callback)));
-    const auto callbackPtr = d_callbacks.back().get();
-    check(sd_bus_match_signal_async(d_bus, nullptr, sender, path, interface, member, onSignal,
-                                    nullptr, callbackPtr),
+    d_handlers.emplace_front(std::move(handler), this, false);
+    check(sd_bus_match_signal_async(d_bus, nullptr, sender, path, interface, member, handleMessage,
+                                    nullptr, &d_handlers.front()),
           "install D-Bus signal handler");
 }
 
-void DBus::processAndWait()
+void DBus::drive()
 {
     while (true) {
         int rc = sd_bus_process(d_bus, nullptr);
         check(rc, "process D-Bus messages");
+        if (d_exception) {
+            std::exception_ptr e;
+            std::swap(e, d_exception);
+            std::rethrow_exception(e);
+        }
         if (rc > 0) {
             return;
         }
         check(sd_bus_wait(d_bus, UINT64_MAX), "wait for D-Bus messages");
+    }
+}
+
+void DBus::setException(std::exception_ptr e)
+{
+    if (!d_exception) {
+        d_exception = std::move(e);
+    }
+    else {
+        try {
+            std::rethrow_exception(e);
+        }
+        catch (const std::exception& exc) {
+            std::println("Additional error: {}", exc.what());
+        }
+        catch (...) {
+            std::println("Additional error (unknown)");
+        }
+    }
+}
+
+int DBus::handleMessage(sd_bus_message* m, void* userdata, sd_bus_error* retError)
+{
+    auto* h = static_cast<HandlerData*>(userdata);
+    int rc = handleMessageImpl(m, h, retError);
+    if (h->isOneShot) {
+        h->bus->d_handlers.remove_if(
+                [h](const HandlerData& hd) { return &hd == h; });
+    }
+    return rc;
+}
+
+int DBus::handleMessageImpl(sd_bus_message* m, HandlerData* h, sd_bus_error* retError)
+{
+    if (sd_bus_message_is_method_error(m, nullptr)) {
+        const sd_bus_error* err = sd_bus_message_get_error(m);
+        h->bus->setException(
+            std::make_exception_ptr(std::runtime_error(err->message)));
+        return sd_bus_error_copy(retError, err);
+    }
+
+    try {
+        DBusMessage msg{sd_bus_message_ref(m)};
+        h->handler(msg);
+        return 0;
+    }
+    catch (const std::exception& e) {
+        h->bus->setException(std::current_exception());
+        return sd_bus_error_set(retError, "runapp.Error", e.what());
+    }
+    catch (...) {
+        h->bus->setException(std::current_exception());
+        return sd_bus_error_set(retError, "runapp.Error", "Unknown error");
     }
 }
 
