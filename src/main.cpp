@@ -132,9 +132,7 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
     };
     bus.callAsync(req, std::move(onStartResponse));
 
-    do {
-        bus.drive();
-    } while (jobResult.empty());
+    bus.driveUntil([&jobResult] { return !jobResult.empty(); });
 
     if (jobResult == "failed") {
         throw std::runtime_error("startup failure");
@@ -169,9 +167,7 @@ try {
 
     bool done = false;
     bus.callAsync(req, [&done](DBusMessage&) { done = true; });
-    do {
-        bus.drive();
-    } while (!done);
+    bus.driveUntil([&done] { return done; });
 }
 catch (const std::exception& e) {
     std::println("Failed to notify user of error: {}", e.what());

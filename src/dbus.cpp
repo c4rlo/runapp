@@ -24,20 +24,8 @@ void check(int rc, const char* operation)
 
 
 DBus::DBus(sd_bus* bus) noexcept
-: d_bus(bus)
+: d_bus(bus, sd_bus_flush_close_unref)
 {
-}
-
-DBus::DBus(DBus&& other) noexcept
-: d_bus(std::exchange(other.d_bus, nullptr)),
-  d_handlers(std::exchange(other.d_handlers, {})),
-  d_exception(std::exchange(other.d_exception, {}))
-{
-}
-
-DBus::~DBus()
-{
-    sd_bus_flush_close_unref(d_bus);
 }
 
 DBus DBus::defaultUserBus()
@@ -54,7 +42,7 @@ DBusMessage DBus::createMethodCall(
         const char* member)
 {
     sd_bus_message* msg{};
-    check(sd_bus_message_new_method_call(d_bus, &msg, destination, path,
+    check(sd_bus_message_new_method_call(d_bus.get(), &msg, destination, path,
                                          interface, member),
           "create D-Bus method call");
     return DBusMessage(msg);
@@ -63,8 +51,8 @@ DBusMessage DBus::createMethodCall(
 void DBus::callAsync(const DBusMessage& message, MessageHandler handler)
 {
     d_handlers.emplace_front(std::move(handler), this, true);
-    check(sd_bus_call_async(d_bus, nullptr, message.d_msg, handleMessage,
-                            &d_handlers.front(), 0),
+    check(sd_bus_call_async(d_bus.get(), nullptr, message.d_msg.get(),
+                            handleMessage, &d_handlers.front(), 0),
           "install D-Bus method response handler");
 }
 
@@ -76,8 +64,8 @@ void DBus::matchSignalAsync(
         MessageHandler handler)
 {
     d_handlers.emplace_front(std::move(handler), this, false);
-    check(sd_bus_match_signal_async(d_bus, nullptr, sender, path, interface,
-                                    member, handleMessage, nullptr,
+    check(sd_bus_match_signal_async(d_bus.get(), nullptr, sender, path,
+                                    interface, member, handleMessage, nullptr,
                                     &d_handlers.front()),
           "install D-Bus signal handler");
 }
@@ -85,7 +73,7 @@ void DBus::matchSignalAsync(
 void DBus::drive()
 {
     while (true) {
-        int rc = sd_bus_process(d_bus, nullptr);
+        int rc = sd_bus_process(d_bus.get(), nullptr);
         check(rc, "process D-Bus messages");
         if (d_exception) {
             std::exception_ptr e;
@@ -95,7 +83,7 @@ void DBus::drive()
         if (rc > 0) {
             return;
         }
-        check(sd_bus_wait(d_bus, UINT64_MAX), "wait for D-Bus messages");
+        check(sd_bus_wait(d_bus.get(), UINT64_MAX), "wait for D-Bus messages");
     }
 }
 
@@ -154,25 +142,15 @@ int DBus::handleMessageImpl(sd_bus_message* m, HandlerData* h, sd_bus_error* ret
 
 
 DBusMessage::DBusMessage(sd_bus_message* msg) noexcept
-: d_msg(msg)
+: d_msg(msg, sd_bus_message_unref)
 {
-}
-
-DBusMessage::DBusMessage(DBusMessage&& other) noexcept
-: d_msg(std::exchange(other.d_msg, nullptr))
-{
-}
-
-DBusMessage::~DBusMessage()
-{
-    sd_bus_message_unref(d_msg);
 }
 
 void DBusMessage::read(const char* types, ...)
 {
     std::va_list args;
     va_start(args, types);
-    int rc = sd_bus_message_readv(d_msg, types, args);
+    int rc = sd_bus_message_readv(d_msg.get(), types, args);
     va_end(args);
     check(rc, "read D-Bus message field");
     if (rc == 0) {
@@ -184,19 +162,19 @@ void DBusMessage::append(const char* types, ...)
 {
     std::va_list args;
     va_start(args, types);
-    int rc = sd_bus_message_appendv(d_msg, types, args);
+    int rc = sd_bus_message_appendv(d_msg.get(), types, args);
     va_end(args);
     check(rc, "append D-Bus message field");
 }
 
 void DBusMessage::openContainer(char type, const char* contents)
 {
-    check(sd_bus_message_open_container(d_msg, type, contents),
+    check(sd_bus_message_open_container(d_msg.get(), type, contents),
           "build D-Bus message (open container)");
 }
 
 void DBusMessage::closeContainer()
 {
-    check(sd_bus_message_close_container(d_msg),
+    check(sd_bus_message_close_container(d_msg.get()),
           "build D-Bus message (close container)");
 }

@@ -1,8 +1,10 @@
-#include <systemd/sd-bus.h>
-
+#include <concepts>
 #include <exception>
 #include <forward_list>
 #include <functional>
+#include <memory>
+
+#include <systemd/sd-bus.h>
 
 
 class DBusMessage;
@@ -11,9 +13,6 @@ class DBusMessage;
 class DBus {
   public:
     using MessageHandler = std::function<void(DBusMessage&)>;
-
-    DBus(DBus&& other) noexcept;
-    ~DBus();
 
     static DBus defaultUserBus();
 
@@ -34,6 +33,13 @@ class DBus {
 
     void drive();
 
+    void driveUntil(const std::invocable auto& condition)
+    {
+        while (!condition()) {
+            drive();
+        }
+    }
+
   private:
     explicit DBus(sd_bus* bus) noexcept;
 
@@ -48,7 +54,7 @@ class DBus {
     static int handleMessage(sd_bus_message* m, void* userdata, sd_bus_error* retError);
     static int handleMessageImpl(sd_bus_message* m, HandlerData* h, sd_bus_error* retError);
 
-    sd_bus* d_bus;
+    std::unique_ptr<sd_bus, decltype(&sd_bus_flush_close_unref)> d_bus;
     std::forward_list<HandlerData> d_handlers;
     std::exception_ptr d_exception;
 };
@@ -56,9 +62,6 @@ class DBus {
 
 class DBusMessage {
   public:
-    DBusMessage(DBusMessage&& other) noexcept;
-    ~DBusMessage();
-
     void read(const char* types, ...);
 
     void append(const char* types, ...);
@@ -68,7 +71,7 @@ class DBusMessage {
   private:
     explicit DBusMessage(sd_bus_message* msg) noexcept;
 
-    sd_bus_message* d_msg;
+    std::unique_ptr<sd_bus_message, decltype(&sd_bus_message_unref)> d_msg;
 
     friend DBus;
 };
