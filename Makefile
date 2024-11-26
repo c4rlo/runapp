@@ -5,7 +5,8 @@ install_runner := sudo
 deps := libsystemd
 
 CXXFLAGS_base := -MMD -MP -Wall -Wextra -Werror -Wtype-limits -Wpedantic -pedantic-errors \
-                 -std=c++23 -D_GNU_SOURCE -march=native -fno-plt -pipe -Isrc $(shell pkg-config --cflags $(deps))
+                 -std=c++23 -D_GNU_SOURCE -march=native -fno-plt -pipe -Isrc \
+		 $(shell pkg-config --cflags $(deps))
 CXXFLAGS_release := -O3 -flto -DNDEBUG
 CXXFLAGS_debug := -Og -ggdb3 -fsanitize=address -fsanitize=undefined -fhardened -D_GLIBCXX_DEBUG
 
@@ -25,7 +26,7 @@ $(modes): %: build_%/$(prog)
 $(build_dirs):
 	mkdir -p $@
 
-define template
+define mode_template
 objects_$(1) := $$(addprefix build_$(1)/,$$(notdir $$(cppfiles:.cpp=.o)))
 $$(objects_$(1)): override CXXFLAGS := $$(CXXFLAGS_base) $$(CXXFLAGS_$(1)) $$(CXXFLAGS)
 build_$(1)/%.o: src/%.cpp Makefile
@@ -38,7 +39,7 @@ build_$(1)/$$(prog): $$(objects_$(1)) Makefile
 build_$(1)/$$(prog): | build_$(1)
 endef
 
-$(foreach mode,$(modes),$(eval $(call template,$(mode))))
+$(foreach mode,$(modes),$(eval $(call mode_template,$(mode))))
 
 all: $(modes)
 

@@ -205,7 +205,7 @@ int main(int argc, char* argv[])
 
     std::optional<DBus> bus;
     try {
-        bus.emplace(DBus::defaultUserBus());
+        bus = DBus::defaultUserBus();
         run(*bus, appName,
             std::span(const_cast<const char**>(&argv[1]), argc - 1));
         return 0;
@@ -214,7 +214,7 @@ int main(int argc, char* argv[])
         const std::string errmsg =
                 std::format("Failed to start {}: {}", appName, e.what());
         std::println(std::cerr, "{}", errmsg);
-        if (bus && !isatty(STDIN_FILENO)) {
+        if (bus && !::isatty(STDIN_FILENO)) {
             notifyError(*bus, desktopID, errmsg);
         }
         return 1;

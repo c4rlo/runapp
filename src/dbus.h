@@ -47,12 +47,13 @@ class DBus {
 
     struct HandlerData {
         MessageHandler handler;
-        DBus* bus{};
+        DBus* bus;
         bool isOneShot;
     };
 
     static int handleMessage(sd_bus_message* m, void* userdata, sd_bus_error* retError);
-    static int handleMessageImpl(sd_bus_message* m, HandlerData* h, sd_bus_error* retError);
+
+    int handleMessageImpl(sd_bus_message* m, const MessageHandler& handler, sd_bus_error* retError);
 
     std::unique_ptr<sd_bus, decltype(&sd_bus_flush_close_unref)> d_bus;
     std::forward_list<HandlerData> d_handlers;
