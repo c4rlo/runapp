@@ -104,33 +104,33 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
 
     std::string jobPath, jobResult;
 
-    auto onJobRemoved = [&jobPath, &jobResult](DBusMessage& msg) {
+    auto onJobRemoved = bus.createHandler([&jobPath, &jobResult](DBusMessage& msg) {
         const char *sigPath{}, *sigResult{};
         msg.read("uoss", nullptr, &sigPath, nullptr, &sigResult);
         if (jobPath == sigPath) {
             jobResult = sigResult;
         }
-    };
+    });
     bus.matchSignalAsync("org.freedesktop.systemd1",
                          "/org/freedesktop/systemd1",
                          "org.freedesktop.systemd1.Manager", "JobRemoved",
-                         std::move(onJobRemoved));
+                         onJobRemoved);
 
-    auto onDisconnected = [&jobResult](DBusMessage&) {
+    auto onDisconnected = bus.createHandler([&jobResult](DBusMessage&) {
         if (jobResult.empty()) {
             jobResult = "disconnected";
         }
-    };
+    });
     bus.matchSignalAsync(
         "org.freedesktop.DBus.Local", nullptr, "org.freedesktop.DBus.Local",
-        "Disconnected", std::move(onDisconnected));
+        "Disconnected", onDisconnected);
 
-    auto onStartResponse = [&jobPath](DBusMessage &resp) {
+    auto onStartResponse = bus.createHandler([&jobPath](DBusMessage &resp) {
         const char *path{};
         resp.read("o", &path);
         jobPath = path;
-    };
-    bus.callAsync(req, std::move(onStartResponse));
+    });
+    bus.callAsync(req, onStartResponse);
 
     bus.driveUntil([&jobResult] { return !jobResult.empty(); });
 
@@ -166,7 +166,8 @@ try {
     req.append("i", 0);  // 0 means never expire
 
     bool done = false;
-    bus.callAsync(req, [&done](DBusMessage&) { done = true; });
+    auto onResponse = bus.createHandler([&done](DBusMessage&) { done = true; });
+    bus.callAsync(req, onResponse);
     bus.driveUntil([&done] { return done; });
 }
 catch (const std::exception& e) {

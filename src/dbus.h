@@ -1,19 +1,20 @@
 #include <concepts>
 #include <exception>
-#include <forward_list>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include <systemd/sd-bus.h>
 
 
+class DBusHandler;
 class DBusMessage;
+
+using DBusMessageFunc = std::function<void(DBusMessage&)>;
 
 
 class DBus {
   public:
-    using MessageHandler = std::function<void(DBusMessage&)>;
-
     static DBus defaultUserBus();
 
     DBusMessage createMethodCall(
@@ -22,14 +23,16 @@ class DBus {
             const char* interface,
             const char* member);
 
-    void callAsync(const DBusMessage& message, MessageHandler handler);
+    DBusHandler createHandler(DBusMessageFunc&& handler);
+
+    void callAsync(const DBusMessage& message, const DBusHandler& handler);
 
     void matchSignalAsync(
             const char* sender,
             const char* path,
             const char* interface,
             const char* member,
-            MessageHandler handler);
+            const DBusHandler& handler);
 
     void drive();
 
@@ -45,18 +48,11 @@ class DBus {
 
     void setException(std::exception_ptr e);
 
-    struct HandlerData {
-        MessageHandler handler;
-        DBus* bus;
-        bool isOneShot;
-    };
-
     static int handleMessage(sd_bus_message* m, void* userdata, sd_bus_error* retError);
 
-    int handleMessageImpl(sd_bus_message* m, const MessageHandler& handler, sd_bus_error* retError);
+    int handleMessageImpl(sd_bus_message* m, const DBusMessageFunc& handler, sd_bus_error* retError);
 
     std::unique_ptr<sd_bus, decltype(&sd_bus_flush_close_unref)> d_bus;
-    std::forward_list<HandlerData> d_handlers;
     std::exception_ptr d_exception;
 };
 
@@ -73,6 +69,26 @@ class DBusMessage {
     explicit DBusMessage(sd_bus_message* msg) noexcept;
 
     std::unique_ptr<sd_bus_message, decltype(&sd_bus_message_unref)> d_msg;
+
+    friend DBus;
+};
+
+
+class DBusHandler {
+  private:
+    DBusHandler(DBusMessageFunc&& handler, DBus* bus);
+
+    struct Impl {
+        DBusMessageFunc d_handler;
+        DBus* d_bus;
+        std::vector<sd_bus_slot*> d_slots;
+
+        ~Impl();
+
+        void checkBusIs(DBus* bus);
+    };
+
+    std::unique_ptr<Impl> d_impl;
 
     friend DBus;
 };
