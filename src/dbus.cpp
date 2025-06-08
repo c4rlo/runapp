@@ -8,8 +8,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include <systemd/sd-bus.h>
-
 
 namespace {
 

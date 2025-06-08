@@ -24,7 +24,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
-const char FUZZEL_DFID_ENV[] = "FUZZEL_DESKTOP_FILE_ID";
+struct RunRequestParams {
+    std::string unitName;
+    std::string description;
+    fs::path workingDir;
+    const char* executable;
+    std::span<const char*> args;
+};
 
 
 int raiseError(const std::string_view operation, int rc)
@@ -34,45 +40,39 @@ int raiseError(const std::string_view operation, int rc)
 }
 
 
-void run(DBus& bus, const std::string& appName, std::span<const char*> args)
+std::optional<std::string> desktopFileID()
 {
-    // Determine systemd unit name
-    std::uint64_t randU64;
-    if (::getentropy(&randU64, sizeof randU64) != 0) {
-        raiseError("get random bytes", errno);
+    if (const char* dfid = std::getenv("FUZZEL_DESKTOP_FILE_ID")) {
+        const char ext[] = ".desktop";
+        const std::size_t extLen = sizeof(ext) - 1;
+        if (std::strlen(dfid) > extLen) {
+            const std::size_t dfidLen = std::strlen(dfid);
+            if (std::strcmp(dfid + dfidLen - extLen, ext) == 0) {
+                return std::string(dfid, dfidLen - extLen);
+            }
+        }
     }
-    std::string dashDE;
-    if (const char* xdgCurrDesktop = std::getenv("XDG_CURRENT_DESKTOP")) {
-        dashDE.push_back('-');
-        dashDE.append(xdgCurrDesktop, ::strchrnul(xdgCurrDesktop, ':') - xdgCurrDesktop);
-    }
-    const std::string unitName =
-        std::format("app{}-{}@{:016x}.service", dashDE, appName, randU64);
+    return {};
+}
 
-    // Get current working directory
-    const fs::path cwd = fs::current_path();
 
-    // Call user systemd via D-Bus. Our call will be equivalent to:
-    //
-    //   systemd-run --user --unit=${unitName} --description=${appName} --service-type=exec
-    //     --property=ExitType=cgroup --same-dir --slice=app-graphical.slice --collect
-    //     --quiet -- ${argv[1:]}
-
+DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
+{
     DBusMessage req = bus.createMethodCall(
             "org.freedesktop.systemd1",
             "/org/freedesktop/systemd1",
             "org.freedesktop.systemd1.Manager",
             "StartTransientUnit");
-    req.append("ss", unitName.c_str(), "fail"); // 'name' and 'mode' args
+    req.append("ss", params.unitName.c_str(), "fail"); // 'name' and 'mode' args
 
     // Begin unit properties ('properties' arg)
     req.openContainer('a', "(sv)");  // array of struct { key:string, value:variant }
-    req.append("(sv)", "Description", "s", appName.c_str());
+    req.append("(sv)", "Description", "s", params.description.c_str());
     req.append("(sv)", "CollectMode", "s", "inactive-or-failed");
     req.append("(sv)", "ExitType", "s", "cgroup");
     req.append("(sv)", "Slice", "s", "app-graphical.slice");
     req.append("(sv)", "Type", "s", "exec");
-    req.append("(sv)", "WorkingDirectory", "s", cwd.c_str());
+    req.append("(sv)", "WorkingDirectory", "s", params.workingDir.c_str());
 
     // Begin ExecStart= property
     req.openContainer('r', "sv");  // struct { key:string, value:variant }
@@ -81,9 +81,9 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
                                         // { executable:string, argv:array{string}, ignoreFailure:bool }
     req.openContainer('a', "(sasb)");   // begin the above array (which will contain a single element)
     req.openContainer('r', "sasb");     // begin array element struct
-    req.append("s", args[0]);     // executable
+    req.append("s", params.executable);     // executable
     req.openContainer('a', "s");  // begin argv
-    for (const char* arg : args) {
+    for (const char* arg : params.args) {
         req.append("s", arg);
     }
     req.closeContainer();  // end argv
@@ -98,6 +98,39 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
     // End 'properties' arg
 
     req.append("a(sa(sv))", nullptr); // 'aux' arg is unused
+
+    return req;
+}
+
+
+void run(DBus& bus, const std::string& appName, std::span<const char*> args)
+{
+    RunRequestParams params;
+
+    // Build systemd unit name
+    std::uint64_t randU64;
+    if (::getentropy(&randU64, sizeof randU64) != 0) {
+        raiseError("get random bytes", errno);
+    }
+    std::string dashDE;
+    if (const char* xdgCurrDesktop = std::getenv("XDG_CURRENT_DESKTOP")) {
+        dashDE += '-';
+        dashDE.append(xdgCurrDesktop, ::strchrnul(xdgCurrDesktop, ':') - xdgCurrDesktop);
+    }
+    params.unitName = std::format("app{}-{}@{:016x}.service", dashDE, appName, randU64);
+
+    params.description = appName;
+    params.workingDir = fs::current_path();
+    params.executable = args[0];
+    params.args = args;
+
+    // Call user systemd via D-Bus. Our call will be equivalent to:
+    //
+    //   systemd-run --user --unit=${unitName} --description=${appName} --service-type=exec
+    //     --property=ExitType=cgroup --same-dir --slice=app-graphical.slice --collect
+    //     --quiet -- ${argv[1:]}
+
+    const DBusMessage req = buildRunRequest(bus, params);
 
     // Set up D-Bus signal handlers so we get to know about the result of
     // starting the job
@@ -125,7 +158,7 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
         "org.freedesktop.DBus.Local", nullptr, "org.freedesktop.DBus.Local",
         "Disconnected", onDisconnected);
 
-    auto onStartResponse = bus.createHandler([&jobPath](DBusMessage &resp) {
+    auto onStartResponse = bus.createHandler([&jobPath](DBusMessage& resp) {
         const char *path{};
         resp.read("o", &path);
         jobPath = path;
@@ -142,7 +175,7 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
     }
 }
 
-void notifyError(DBus& bus, const std::string& desktopID, const std::string& errmsg)
+void notifyError(DBus& bus, const std::string& errmsg, const std::optional<std::string>& desktopID)
 try {
     DBusMessage req = bus.createMethodCall(
             "org.freedesktop.Notifications",
@@ -156,8 +189,8 @@ try {
 
     // hints
     req.openContainer('a', "{sv}");
-    if (!desktopID.empty()) {
-        req.append("{sv}", "desktop-entry", "s", desktopID.c_str());
+    if (desktopID) {
+        req.append("{sv}", "desktop-entry", "s", desktopID->c_str());
     }
     req.append("{sv}", "urgency", "y", 2);  // 2=critical
     req.closeContainer();
@@ -184,25 +217,10 @@ int main(int argc, char* argv[])
         return 2;
     }
 
-    std::string desktopID;
-    if (const char* dfid = std::getenv(FUZZEL_DFID_ENV)) {
-        const char ext[] = ".desktop";
-        const std::size_t extLen = sizeof(ext) - 1;
-        if (std::strlen(dfid) > extLen) {
-            const std::size_t dfidLen = std::strlen(dfid);
-            if (std::strcmp(dfid + dfidLen - extLen, ext) == 0) {
-                desktopID.assign(dfid, dfidLen - extLen);
-            }
-        }
-    }
+    const std::optional<std::string> desktopID = desktopFileID();
 
-    std::string appName;
-    if (!desktopID.empty()) {
-        appName = desktopID;
-    }
-    else {
-        appName = fs::path(argv[1]).filename();
-    }
+    const std::string appName =
+        desktopID ? *desktopID : fs::path(argv[1]).filename().string();
 
     std::optional<DBus> bus;
     try {
@@ -216,7 +234,7 @@ int main(int argc, char* argv[])
                 std::format("Failed to start {}: {}", appName, e.what());
         std::println(std::cerr, "{}", errmsg);
         if (bus && !::isatty(STDIN_FILENO)) {
-            notifyError(*bus, desktopID, errmsg);
+            notifyError(*bus, errmsg, desktopID);
         }
         return 1;
     }
