@@ -73,7 +73,5 @@ Most of the features on this list are implemented in `uwsm app`.
 - Support running app within different systemd slices
 - Support running app under Terminal
 - Support custom unit name / description
-- Help output
-- Verbose mode
 - Alternative ways of accepting Desktop File ID (beyond Fuzzel)
 - Linux distro packaging: at least AUR for Arch Linux

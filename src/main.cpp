@@ -1,3 +1,4 @@
+#include "cmdline.h"
 #include "dbus.h"
 
 #include <cerrno>
@@ -31,6 +32,17 @@ struct RunRequestParams {
     const char* executable;
     std::span<const char*> args;
 };
+
+bool g_verbose;
+
+
+template<class... Args>
+void verbosePrintln(std::format_string<Args...> fmt, Args&&... args)
+{
+    if (g_verbose) {
+        std::println(fmt, std::forward<Args>(args)...);
+    }
+}
 
 
 int raiseError(const std::string_view operation, int rc)
@@ -124,6 +136,8 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
     params.executable = args[0];
     params.args = args;
 
+    verbosePrintln("Launching {}: {}", params.unitName, params.args);
+
     // Call user systemd via D-Bus. Our call will be equivalent to:
     //
     //   systemd-run --user --unit=${unitName} --description=${appName} --service-type=exec
@@ -173,6 +187,8 @@ void run(DBus& bus, const std::string& appName, std::span<const char*> args)
     else if (jobResult != "done") {
         throw std::runtime_error(jobResult);
     }
+
+    verbosePrintln("Success");
 }
 
 void notifyError(DBus& bus, const std::string& errmsg, const std::optional<std::string>& desktopID)
@@ -204,7 +220,7 @@ try {
     bus.driveUntil([&done] { return done; });
 }
 catch (const std::exception& e) {
-    std::println("Failed to notify user of error: {}", e.what());
+    std::println("Failed to notify user of error via org.freedesktop.Notifications: {}", e.what());
 }
 
 } // namespace
@@ -212,21 +228,25 @@ catch (const std::exception& e) {
 
 int main(int argc, char* argv[])
 {
-    if (argc < 2) {
-        std::println(std::cerr, "usage: {} COMMAND...", argv[0]);
+    const auto args = parseArgs(argc, argv);
+    if (!args) {
         return 2;
     }
+    if (args->help) {
+        return 0;
+    }
+
+    g_verbose = args->verbose;
 
     const std::optional<std::string> desktopID = desktopFileID();
 
     const std::string appName =
-        desktopID ? *desktopID : fs::path(argv[1]).filename().string();
+        desktopID ? *desktopID : fs::path(args->args[0]).filename().string();
 
     std::optional<DBus> bus;
     try {
         bus = DBus::defaultUserBus();
-        run(*bus, appName,
-            std::span(const_cast<const char**>(&argv[1]), argc - 1));
+        run(*bus, appName, args->args);
         return 0;
     }
     catch (const std::exception& e) {
@@ -234,6 +254,7 @@ int main(int argc, char* argv[])
                 std::format("Failed to start {}: {}", appName, e.what());
         std::println(std::cerr, "{}", errmsg);
         if (bus && !::isatty(STDIN_FILENO)) {
+            verbosePrintln("Notifying user of error via org.freedesktop.Notifications");
             notifyError(*bus, errmsg, desktopID);
         }
         return 1;
