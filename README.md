@@ -41,7 +41,7 @@ Requirements:
 
 - GCC (needs C++23 support)
 - glibc
-- libsystemd (e.g. `apt install libsystemd-dev` on Debian/Ubuntu systems)
+- libsystemd (present on any system that uses systemd)
 
 ```
 make install
@@ -53,6 +53,9 @@ Will compile a release version and install it (via `sudo`) as `/usr/local/bin/ru
 
 - Fast
 - No dependencies beyond systemd
+- Run app either as systemd service (recommended, default) or as systemd scope
+    - The latter means `runapp` directly executes the application, after registering it with systemd
+- Run app either under `app-graphical.slice` (recommended for most cases, default) or under any other slice
 - If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations
 - On error, if not run from interactive terminal, show desktop notification
 
@@ -60,7 +63,6 @@ Will compile a release version and install it (via `sudo`) as `/usr/local/bin/ru
 
 Most of the features on this list are implemented in `uwsm app`.
 
-- Unit name: enforce restricted character set and max length
 - Unit description: derive from `.desktop` file
   - For Fuzzel, would be made much easier (and more performant) with https://codeberg.org/dnkl/fuzzel/issues/292
 - Support being given a Desktop File ID (only)
@@ -69,9 +71,6 @@ Most of the features on this list are implemented in `uwsm app`.
   - See https://specifications.freedesktop.org/desktop-entry-spec/latest/exec-variables.html
   - Note that `%f` and `%u` entail running multiple app instances
   - Alternatively, this could be done by the launcher, e.g. Fuzzel: https://codeberg.org/dnkl/fuzzel/issues/346
-- Support running app as systemd scope instead of systemd service
-- Support running app within different systemd slices
 - Support running app under Terminal
 - Support custom unit name / description
 - Alternative ways of accepting Desktop File ID (beyond Fuzzel)
-- Linux distro packaging: at least AUR for Arch Linux
