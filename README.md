@@ -37,23 +37,18 @@ launchers.
 
 ## Installation
 
-Requirements:
-
-- GCC (needs C++23 support)
-- glibc
-- libsystemd (present on any system that uses systemd)
-
-```
-make install
-```
-
-Will compile a release version and install it (via `sudo`) as `/usr/local/bin/runapp`.
+- If using Arch Linux, install [runapp from the AUR](https://aur.archlinux.org/packages/runapp)
+  ([what's the AUR?](https://wiki.archlinux.org/index.php/Arch_User_Repository)).
+- Otherwise, run `make install`. This requires that you have a recent GCC with C++
+  compiler and GNU Make. You may be prompted for your `sudo` password.
+  To uninstall again, run `make uninstall`.
 
 ## Current features
 
 - Fast
 - No dependencies beyond systemd
-- Run app either as systemd service (recommended, default) or as systemd scope
+- Run app either as systemd [service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
+  (recommended, default) or as systemd [scope](https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html)
     - The latter means `runapp` directly executes the application, after registering it with systemd
 - Run app either under `app-graphical.slice` (recommended for most cases, default) or under any other slice
 - If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations
@@ -74,3 +69,13 @@ Most of the features on this list are implemented in `uwsm app`.
 - Support running app under Terminal
 - Support custom unit name / description
 - Alternative ways of accepting Desktop File ID (beyond Fuzzel)
+
+## Development
+
+Prerequisites: Recent GCC with C++ compiler and GNU Make.
+
+- `make debug`: create debug build.
+- `make compile_commands.json`: generate [`compile_commands.json`](https://clang.llvm.org/docs/JSONCompilationDatabase.html) file,
+  useful for language servers like [`clangd`](https://clangd.llvm.org/); requires [`bear`](https://github.com/rizsotto/Bear).
+- `make release`: create release build.
+- `make clean`: delete all build artefacts.
