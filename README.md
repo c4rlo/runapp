@@ -70,6 +70,15 @@ Most of the features on this list are implemented in `uwsm app`.
 - Support custom unit name / description
 - Alternative ways of accepting Desktop File ID (beyond Fuzzel)
 
+## Alternatives
+
+- [`uwsm app`](https://github.com/Vladimir-csp/uwsm?tab=readme-ov-file#3-applications-and-slices):
+  the original; somewhat slow due to being written in Python
+- [`uwsm-app`](https://github.com/Vladimir-csp/uwsm/blob/master/scripts/uwsm-app.sh):
+  shell script that ships with uwsm; spawns a background daemon
+- [`app2unit`](https://github.com/Vladimir-csp/app2unit): self-sufficient and feature-complete
+  shell script by the author of uwsm
+
 ## Development
 
 Prerequisites: Recent GCC with C++ compiler and GNU Make.
