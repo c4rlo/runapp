@@ -1,5 +1,6 @@
 #include "cmdline.h"
 #include "dbus.h"
+#include "verbose.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -37,17 +38,6 @@ struct RunRequestParams {
     const char* executable{};
     std::span<const char*> args;
 };
-
-bool g_verbose;
-
-
-template<class... Args>
-void verbosePrintln(std::format_string<Args...> fmt, Args&&... args)
-{
-    if (g_verbose) {
-        std::println(fmt, std::forward<Args>(args)...);
-    }
-}
 
 
 int raiseSystemError(const std::string_view operation, int code)
@@ -211,15 +201,18 @@ std::string buildUnitName(const std::string& appName, RunMode runMode)
 }
 
 
-void run(DBus& bus, const std::string& appName, const CmdlineArgs& args)
+void run(const std::string& appName, const CmdlineArgs& args)
 {
-    RunRequestParams params;
-    params.unitName = buildUnitName(appName, args.runMode);
-    params.description = appName;
-    params.slice = args.slice;
-    params.runMode = args.runMode;
-    params.executable = args.args[0];
-    params.args = args.args;
+    RunRequestParams params{
+       .unitName = buildUnitName(appName, args.runMode),
+       .description = appName,
+       .slice = args.slice,
+       .runMode = args.runMode,
+       .executable = args.args[0],
+       .args = args.args,
+    };
+
+    DBus bus = DBus::systemdUserBus();
 
     const DBusMessage req = buildRunRequest(bus, params);
 
@@ -273,8 +266,10 @@ void run(DBus& bus, const std::string& appName, const CmdlineArgs& args)
     }
 }
 
-void notifyErrorFreedesktop(DBus& bus, const std::string& errmsg, const std::optional<std::string>& desktopID)
+void notifyErrorFreedesktop(const std::string& errmsg, const std::optional<std::string>& desktopID)
 try {
+    DBus bus = DBus::defaultUserBus();
+
     DBusMessage req = bus.createMethodCall(
             "org.freedesktop.Notifications",
             "/org/freedesktop/Notifications",
@@ -329,10 +324,8 @@ int main(int argc, char* argv[])
         const std::string appName =
             desktopID ? *desktopID : fs::path(args->args[0]).filename().string();
 
-        std::optional<DBus> bus;
         try {
-            bus = DBus::defaultUserBus();
-            run(*bus, appName, *args);
+            run(appName, *args);
             if (args->runMode == RunMode::SERVICE) {
                 verbosePrintln("Success");
             }
@@ -346,9 +339,9 @@ int main(int argc, char* argv[])
             const std::string errmsg =
                     std::format("Failed to start {}: {}", appName, e.what());
             std::println(std::cerr, "{}", errmsg);
-            if (bus && !::isatty(STDIN_FILENO)) {
+            if (!::isatty(STDIN_FILENO)) {
                 verbosePrintln("Notifying user of error via org.freedesktop.Notifications");
-                notifyErrorFreedesktop(*bus, errmsg, desktopID);
+                notifyErrorFreedesktop(errmsg, desktopID);
             }
             return 1;
         }

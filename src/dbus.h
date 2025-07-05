@@ -15,7 +15,12 @@ using DBusMessageFunc = std::function<void(DBusMessage&)>;
 
 class DBus {
   public:
+    // Return connection to user systemd instance via the standard D-Bus broker.
     static DBus defaultUserBus();
+
+    // Return connection to user systemd instance via dedicated systemd-provided
+    // socket, bypassing the D-Bus broker, for better performance.
+    static DBus systemdUserBus();
 
     DBusMessage createMethodCall(
             const char* destination,

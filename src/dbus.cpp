@@ -1,8 +1,10 @@
 #include "dbus.h"
+#include "verbose.h"
 
 #include <cstdarg>
 #include <cstdint>
 #include <format>
+#include <iostream>
 #include <memory>
 #include <print>
 #include <stdexcept>
@@ -29,9 +31,33 @@ DBus::DBus(sd_bus* bus) noexcept
 
 DBus DBus::defaultUserBus()
 {
-    sd_bus* bus{};
-    check(sd_bus_default_user(&bus), "create D-Bus connection");
-    return DBus(bus);
+    sd_bus* bus_p{};
+    check(sd_bus_default_user(&bus_p), "create D-Bus connection");
+    return DBus(bus_p);
+}
+
+DBus DBus::systemdUserBus()
+{
+    // This is how systemd-run connects to systemd. It's unfortunately not publicly documented.
+    if (const char* rtDir = std::getenv("XDG_RUNTIME_DIR")) {
+        try {
+            sd_bus* bus_p{};
+            check(sd_bus_new(&bus_p), "allocate D-Bus object");
+            DBus bus(bus_p);
+            const std::string address = std::format("unix:path={}/systemd/private", rtDir);
+            check(sd_bus_set_address(bus_p, address.c_str()), "set D-Bus address");
+            check(sd_bus_start(bus_p), "start D-Bus connection");
+            return bus;
+        }
+        catch (const std::exception& e) {
+            verbosePrintln(
+                    "Failed to connect to user systemd private socket ({}). "
+                    "Falling back to standard user D-Bus socket.",
+                    e.what());
+        }
+    }
+
+    return defaultUserBus();
 }
 
 DBusMessage DBus::createMethodCall(
