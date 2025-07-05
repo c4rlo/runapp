@@ -34,7 +34,6 @@ struct RunRequestParams {
     std::string description;
     std::string slice;
     RunMode runMode{RunMode::SERVICE};
-    fs::path workingDir;
     const char* executable{};
     std::span<const char*> args;
 };
@@ -71,7 +70,7 @@ struct FdGuard {
     int fd;
     ~FdGuard() {
         if (close(fd) != 0) {
-            reportSystemError("close fd", errno);
+            reportSystemError("close file descriptor", errno);
         }
     }
 };
@@ -111,7 +110,8 @@ DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
     //     -- ${argv[1:]}
     //
     // In the latter case, instead of passing ExecStart=, we pass a reference to
-    // our own PID in PIDFDs=, and our caller then executes the target program itself.
+    // our own PID in PIDFDs=, and we'll then ultimately execute the target program
+    // directly (near the end of main()).
 
     DBusMessage req = bus.createMethodCall(
             "org.freedesktop.systemd1",
@@ -129,7 +129,7 @@ DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
     if (params.runMode == RunMode::SERVICE) {
         req.append("(sv)", "Type", "s", "exec");
         req.append("(sv)", "ExitType", "s", "cgroup");
-        req.append("(sv)", "WorkingDirectory", "s", params.workingDir.c_str());
+        req.append("(sv)", "WorkingDirectory", "s", fs::current_path().c_str());
 
         // Begin ExecStart= property
         req.openContainer('r', "sv");  // struct { key:string, value:variant }
@@ -152,9 +152,6 @@ DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
         // End ExecStart= property
     }
     else {  // SCOPE
-        // params.workingDir is currently always the current directory,
-        // so no need to chdir().
-
         const int pfd = pidfd_open(getpid(), 0);
         if (pfd == -1) {
             raiseSystemError("get pidfd", errno);
@@ -221,7 +218,6 @@ void run(DBus& bus, const std::string& appName, const CmdlineArgs& args)
     params.description = appName;
     params.slice = args.slice;
     params.runMode = args.runMode;
-    params.workingDir = fs::current_path();
     params.executable = args.args[0];
     params.args = args.args;
 
@@ -361,7 +357,7 @@ int main(int argc, char* argv[])
     if (execArgs != nullptr) {
         verbosePrintln("Executing {}", execArgs[0]);
         execvp(execArgs[0], const_cast<char**>(execArgs));
-        reportSystemError("execvp", errno);
+        reportSystemError("execute program", errno);
         return 1;
     }
 

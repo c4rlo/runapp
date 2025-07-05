@@ -15,10 +15,9 @@ all-in on the systemd way of running applications in a Desktop context, and anot
 to `runapp`. In fact, the `uwsm app` subcommand has exactly the same purpose as `runapp`, and has
 several more features; see below [Missing features](#missing-features) section for a comparison.
 
-So why `runapp`? Its advantage over `uwsm app` is that it is a native executable (written in C++),
-hence it has significantly lower startup latency and resource usage (`uwsm` is written in Python).
-And compared to the `uwsm-app` tool that is shipped with `uwsm`, `runapp` does not require a
-permanently-running background daemon.
+So why `runapp`? Its main advantage over `uwsm app` and other alternatives is that it is fast:
+being a native executable (written in C++) with no dependencies, it has significantly lower startup
+latency and resource usage.
 
 ## Usage
 
@@ -35,6 +34,26 @@ to also run any application it launches via `runapp`.
 Variants of the above will apply for other combinations of desktop compositors and application
 launchers.
 
+To see what else you can do, try `runapp --help`:
+
+```
+runapp usage:
+
+runapp [-v|--verbose] [-o|--scope] [-i SLICE|--slice=SLICE] COMMAND...
+    Run COMMAND as an application under the user systemd instance,
+    in a way suitable for typical graphical applications.
+
+    -v, --verbose: Increase output verbosity.
+    -o, --scope:   Run command directly, registering it as a systemd scope;
+                   the default is to run it as a systemd service.
+    -i SLICE, --slice=SLICE:
+                   Assign the systemd unit to the given slice (name must include
+                   ".slice" suffix); the default is "app-graphical.slice".
+
+runapp --help
+    Show this help text.
+```
+
 ## Installation
 
 - If using Arch Linux, install [runapp from the AUR](https://aur.archlinux.org/packages/runapp)
@@ -43,32 +62,33 @@ launchers.
   compiler and GNU Make. You may be prompted for your `sudo` password.
   To uninstall again, run `make uninstall`.
 
-## Current features
+## Features
 
-- Fast
-- No dependencies beyond systemd
+- Fast: talks directly to systemd, via its private socket if available, the same way that `systemd-run` does.
+- No dependencies beyond systemd.
 - Run app either as systemd [service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
-  (recommended, default) or as systemd [scope](https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html)
-    - The latter means `runapp` directly executes the application, after registering it with systemd
-- Run app either under `app-graphical.slice` (recommended for most cases, default) or under any other slice
-- If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations
-- On error, if not run from interactive terminal, show desktop notification
+  (recommended, default) or as systemd [scope](https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html).
+    - The latter means `runapp` directly executes the application, after registering it with systemd.
+- Run app either under `app-graphical.slice` (recommended for most cases, default) or under any other slice.
+- If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations.
+- On error, if not run from interactive terminal, show desktop notification.
 
 ## Missing features
 
-Most of the features on this list are implemented in `uwsm app`.
+Most of the features on this list are implemented in `uwsm app`. I don't consider these very important to have,
+but I'm open to discussions (feel free to open an issue!).
 
-- Unit description: derive from `.desktop` file
+- Support custom unit name / description.
+- Unit description: derive from `.desktop` file.
   - For Fuzzel, would be made much easier (and more performant) with https://codeberg.org/dnkl/fuzzel/issues/292
-- Support being given a Desktop File ID (only)
+- Support being given a Desktop File ID (only).
   - With optional Action ID
-- Support running `.desktop` files with args, using field codes
+- Support running `.desktop` files with args, using field codes.
   - See https://specifications.freedesktop.org/desktop-entry-spec/latest/exec-variables.html
   - Note that `%f` and `%u` entail running multiple app instances
   - Alternatively, this could be done by the launcher, e.g. Fuzzel: https://codeberg.org/dnkl/fuzzel/issues/346
-- Support running app under Terminal
-- Support custom unit name / description
-- Alternative ways of accepting Desktop File ID (beyond Fuzzel)
+- Alternative ways of accepting Desktop File ID (beyond Fuzzel).
+- Support running app under Terminal.
 
 ## Alternatives
 

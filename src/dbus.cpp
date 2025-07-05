@@ -105,10 +105,10 @@ void DBus::setException(std::exception_ptr e)
             std::rethrow_exception(e);
         }
         catch (const std::exception& exc) {
-            std::println("Additional error: {}", exc.what());
+            std::println(std::cerr, "Additional error: {}", exc.what());
         }
         catch (...) {
-            std::println("Additional error (unknown)");
+            std::println(std::cerr, "Additional error (unknown)");
         }
     }
 }
