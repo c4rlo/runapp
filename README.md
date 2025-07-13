@@ -6,8 +6,8 @@ Its job is simple: it launches the given application in an appropriate systemd u
 to systemd's [idea](https://systemd.io/DESKTOP_ENVIRONMENTS/#xdg-standardization-for-applications)
 of how this should be done.
 
-It is useful if you are using a light-weight Linux desktop such as [Sway](https://swaywm.org/). In
-such cases, `runapp` works great as a complement to your favourite application launcher, such as
+It is useful if you are using a light-weight Linux desktop environment such as [Sway](https://swaywm.org/).
+In such cases, `runapp` works great as a complement to your favourite application launcher, such as
 [Fuzzel](https://codeberg.org/dnkl/fuzzel).
 
 `runapp` owes its inspiration to [uwsm](https://github.com/Vladimir-csp/uwsm), a great way to go
@@ -29,7 +29,7 @@ bindsym Mod4+d runapp fuzzel --launch-prefix runapp
 ```
 
 This will launch Fuzzel via `runapp` when the `Super+D` key combination is pressed, and tells Fuzzel
-to also run any application it launches via `runapp`.
+to run any application it launches via `runapp` as well.
 
 Variants of the above will apply for other combinations of desktop compositors and application
 launchers.
@@ -37,11 +37,9 @@ launchers.
 To see what else you can do, try `runapp --help`:
 
 ```
-runapp usage:
-
-runapp [-v|--verbose] [-o|--scope] [-i SLICE|--slice=SLICE] COMMAND...
-    Run COMMAND as an application under the user systemd instance,
-    in a way suitable for typical graphical applications.
+runapp [OPTIONS] COMMAND...
+    Run COMMAND as a systemd user unit, in a way suitable for typical applications.
+    Options:
 
     -v, --verbose: Increase output verbosity.
     -o, --scope:   Run command directly, registering it as a systemd scope;
@@ -49,15 +47,22 @@ runapp [-v|--verbose] [-o|--scope] [-i SLICE|--slice=SLICE] COMMAND...
     -i SLICE, --slice=SLICE:
                    Assign the systemd unit to the given slice (name must include
                    ".slice" suffix); the default is "app-graphical.slice".
+    -d DIR, --dir=DIR:
+                   Set working directory of command to DIR.
+    -e VAR=VALUE, --env=VAR=VALUE:
+                   Run command with given environment variable set;
+                   may be given multiple times.
 
 runapp --help
     Show this help text.
 ```
 
+Or you can read the man page via `man runapp`.
+
 ## Installation
 
 - If using Arch Linux, install [runapp from the AUR](https://aur.archlinux.org/packages/runapp)
-  ([what's the AUR?](https://wiki.archlinux.org/index.php/Arch_User_Repository)).
+  ([Arch User Repository](https://wiki.archlinux.org/index.php/Arch_User_Repository)).
 - Otherwise, run `make install`. This requires that you have a recent GCC with C++
   compiler and GNU Make. You may be prompted for your `sudo` password.
   To uninstall again, run `make uninstall`.
@@ -70,6 +75,8 @@ runapp --help
   (recommended, default) or as systemd [scope](https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html).
     - The latter means `runapp` directly executes the application, after registering it with systemd.
 - Run app either under `app-graphical.slice` (recommended for most cases, default) or under any other slice.
+- Option to run app in given working directory.
+- Option to run app with given environment variables.
 - If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations.
 - On error, if not run from interactive terminal, show desktop notification.
 

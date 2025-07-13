@@ -10,6 +10,7 @@
 #include <exception>
 #include <filesystem>
 #include <format>
+#include <ios>
 #include <iostream>
 #include <optional>
 #include <print>
@@ -30,17 +31,8 @@ namespace {
 
 namespace fs = std::filesystem;
 
-struct RunRequestParams {
-    std::string unitName;
-    std::string description;
-    std::string slice;
-    RunMode runMode{RunMode::SERVICE};
-    const char* executable{};
-    std::span<const char*> args;
-};
 
-
-int raiseSystemError(const std::string_view operation, int code)
+int throwSystemError(const std::string_view operation, int code)
 {
     throw std::system_error(code, std::system_category(),
                             std::format("Failed to {}", operation));
@@ -82,7 +74,8 @@ std::optional<std::string> desktopFileID()
 }
 
 
-DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
+DBusMessage buildRunRequest(DBus& bus, const std::string& unitName, const std::string& description,
+                            const CmdlineArgs& args)
 {
     // Call user systemd via D-Bus. If params.runMode == SERVICE, the call will be
     // equivalent to:
@@ -108,18 +101,43 @@ DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
             "/org/freedesktop/systemd1",
             "org.freedesktop.systemd1.Manager",
             "StartTransientUnit");
-    req.append("ss", params.unitName.c_str(), "fail"); // 'name' and 'mode' args
+    req.append("ss", unitName.c_str(), "fail"); // 'name' and 'mode' args
 
     // Begin unit properties ('properties' arg)
     req.openContainer('a', "(sv)");  // array of struct { key:string, value:variant }
-    req.append("(sv)", "Description", "s", params.description.c_str());
+    req.append("(sv)", "Description", "s", description.c_str());
     req.append("(sv)", "CollectMode", "s", "inactive-or-failed");
-    req.append("(sv)", "Slice", "s", params.slice.c_str());
+    req.append("(sv)", "Slice", "s", args.slice);
 
-    if (params.runMode == RunMode::SERVICE) {
+    if (args.isScope) {
+        const int pfd = pidfd_open(getpid(), 0);
+        if (pfd == -1) {
+            throwSystemError("get pidfd", errno);
+        }
+        FdGuard pfdGuard{pfd};
+        req.append("(sv)", "PIDFDs", "ah", 1, pfd);  // this duplicates the pfd file descriptor
+    }
+    else {
         req.append("(sv)", "Type", "s", "exec");
         req.append("(sv)", "ExitType", "s", "cgroup");
-        req.append("(sv)", "WorkingDirectory", "s", fs::current_path().c_str());
+
+        if (args.workingDir) {
+            req.append("(sv)", "WorkingDirectory", "s",
+                       fs::absolute(*args.workingDir).lexically_normal().c_str());
+        }
+
+        if (!args.env.empty()) {
+            req.openContainer('r', "sv");  // struct { key:string, value:variant }
+            req.append("s", "Environment");
+            req.openContainer('v', "as");  // variant type: array of string
+            req.openContainer('a', "s");   // begin array
+            for (const char* env : args.env) {
+                req.append("s", env);
+            }
+            req.closeContainer();  // end array
+            req.closeContainer();  // end variant
+            req.closeContainer();  // end struct
+        }
 
         // Begin ExecStart= property
         req.openContainer('r', "sv");  // struct { key:string, value:variant }
@@ -128,26 +146,18 @@ DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
                                             // { executable:string, argv:array{string}, ignoreFailure:bool }
         req.openContainer('a', "(sasb)");   // begin the above array (which will contain a single element)
         req.openContainer('r', "sasb");     // begin array element struct
-        req.append("s", params.executable);     // executable
+        req.append("s", args.args[0]);     // executable
         req.openContainer('a', "s");  // begin argv
-        for (const char* arg : params.args) {
+        for (const char* arg : args.args) {
             req.append("s", arg);
         }
         req.closeContainer();  // end argv
-        req.append("b", 0);    // ignoreFailure
+        req.append("b", 0);    // ignoreFailure = false
         req.closeContainer();  // end array element struct
         req.closeContainer();  // end array
         req.closeContainer();  // end variant
         req.closeContainer();  // end key-value struct
         // End ExecStart= property
-    }
-    else {  // SCOPE
-        const int pfd = pidfd_open(getpid(), 0);
-        if (pfd == -1) {
-            raiseSystemError("get pidfd", errno);
-        }
-        FdGuard pfdGuard{pfd};
-        req.append("(sv)", "PIDFDs", "ah", 1, pfd);  // this duplicates the pfd file descriptor
     }
 
     req.closeContainer();
@@ -159,7 +169,7 @@ DBusMessage buildRunRequest(DBus& bus, const RunRequestParams& params)
 }
 
 
-std::string buildUnitName(const std::string& appName, RunMode runMode)
+std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
 {
     // https://systemd.io/DESKTOP_ENVIRONMENTS/#xdg-standardization-for-applications
     // states recommendations that we follow here.
@@ -189,32 +199,24 @@ std::string buildUnitName(const std::string& appName, RunMode runMode)
 
     std::uint64_t randU64;
     if (::getentropy(&randU64, sizeof randU64) != 0) {
-        raiseSystemError("get random bytes", errno);
+        throwSystemError("get random bytes", errno);
     }
 
-    if (runMode == RunMode::SERVICE) {
-        return std::format("{}@{:016x}.service", unitPrefix, randU64);
-    }
-    else {  // SCOPE
+    if (args.isScope) {
         return std::format("{}-{:016x}.scope", unitPrefix, randU64);
+    }
+    else {
+        return std::format("{}@{:016x}.service", unitPrefix, randU64);
     }
 }
 
 
 void run(const std::string& appName, const CmdlineArgs& args)
 {
-    RunRequestParams params{
-       .unitName = buildUnitName(appName, args.runMode),
-       .description = appName,
-       .slice = args.slice,
-       .runMode = args.runMode,
-       .executable = args.args[0],
-       .args = args.args,
-    };
-
     DBus bus = DBus::systemdUserBus();
 
-    const DBusMessage req = buildRunRequest(bus, params);
+    const std::string unitName = buildUnitName(appName, args);
+    const DBusMessage req = buildRunRequest(bus, unitName, appName, args);
 
     // Set up D-Bus signal handlers so we get to know about the result of
     // starting the job
@@ -242,11 +244,11 @@ void run(const std::string& appName, const CmdlineArgs& args)
         "org.freedesktop.DBus.Local", nullptr, "org.freedesktop.DBus.Local",
         "Disconnected", onDisconnected);
 
-    if (args.runMode == RunMode::SERVICE) {
-        verbosePrintln("Launching {}: {}", params.unitName, params.args);
+    if (args.isScope) {
+        verbosePrintln("Starting {}; will execute: {}.", unitName, args.args);
     }
-    else {  // SCOPE
-        verbosePrintln("Starting {}; will execute: {}", params.unitName, params.args);
+    else {
+        verbosePrintln("Launching {}: {}.", unitName, args.args);
     }
 
     auto onStartResponse = bus.createHandler([&jobPath](DBusMessage& resp) {
@@ -306,18 +308,21 @@ catch (const std::exception& e) {
 
 int main(int argc, char* argv[])
 {
-    const char** execArgs{};
+    CmdlineArgs cmdlineArgs;
 
     {
-        const auto args = parseArgs(argc, argv);
+        std::ios::sync_with_stdio(false);  // We only use C++ streams.
+        std::cout << std::unitbuf;  // Enable flush after output for cout (like cerr).
+
+        auto args = parseArgs(argc, argv);
         if (!args) {
             return 2;
         }
-        if (args->help) {
+        if (args->isHelp) {
             return 0;
         }
 
-        g_verbose = args->verbose;
+        g_verbose = args->isVerbose;
 
         const std::optional<std::string> desktopID = desktopFileID();
 
@@ -326,13 +331,8 @@ int main(int argc, char* argv[])
 
         try {
             run(appName, *args);
-            if (args->runMode == RunMode::SERVICE) {
-                verbosePrintln("Success");
-            }
-            else {  // SCOPE
-                // Defer call to execvp() to the end of main(), after as much as possible
-                // of an orderly shutdown has happened (e.g. various destructors have run).
-                execArgs = args->args.data();
+            if (!args->isScope) {
+                verbosePrintln("Success.");
             }
         }
         catch (const std::exception& e) {
@@ -340,19 +340,31 @@ int main(int argc, char* argv[])
                     std::format("Failed to start {}: {}", appName, e.what());
             std::println(std::cerr, "{}", errmsg);
             if (!::isatty(STDIN_FILENO)) {
-                verbosePrintln("Notifying user of error via org.freedesktop.Notifications");
+                verbosePrintln("Notifying user of error via org.freedesktop.Notifications.");
                 notifyErrorFreedesktop(errmsg, desktopID);
             }
             return 1;
         }
+
+        cmdlineArgs = std::move(*args);
     }
 
-    if (execArgs != nullptr) {
-        verbosePrintln("Executing {}", execArgs[0]);
-        execvp(execArgs[0], const_cast<char**>(execArgs));
+    if (cmdlineArgs.isScope) {
+        verbosePrintln("Executing {}.", cmdlineArgs.args[0]);
+        if (cmdlineArgs.workingDir) {
+            if (chdir(*cmdlineArgs.workingDir) != 0) {
+                reportSystemError("chdir", errno);
+                return 1;
+            }
+        }
+        for (const char* env : cmdlineArgs.env) {
+            if (putenv(const_cast<char*>(env)) != 0) {
+                reportSystemError("putenv", errno);
+                return 1;
+            }
+        }
+        execvp(cmdlineArgs.args[0], const_cast<char**>(cmdlineArgs.args.data()));
         reportSystemError("execute program", errno);
         return 1;
     }
-
-    return 0;
 }

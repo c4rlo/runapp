@@ -1,0 +1,93 @@
+.TH RUNAPP 1
+.
+.SH NAME
+runapp \- Linux desktop application runner
+.
+.SH SYNOPSIS
+.SY runapp
+.RI [ OPTIONS ]
+.IR COMMAND ...
+.YS
+.SY runapp
+.B \-\-help
+.YS
+.
+.SH DESCRIPTION
+\fBrunapp\fP is an application runner for Linux desktop environments
+that integrate with
+.MR systemd 1 .
+It launches the given command in an appropriate systemd user unit,
+in accordance with systemd recommendations.
+.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-verbose
+Increase output verbosity.
+.TP
+.BR \-o ", " \-\-scope
+Run command directly, registering it as a systemd scope;
+the default is to run it as a systemd service.
+.TP
+.BR \-i ", " \-\-slice =\fISLICE\fP
+Assign the systemd unit to the given slice (name must include
+\(lq.slice\(rq suffix); the default is \(lqapp\-graphical.slice\(rq.
+.TP
+.BR \-d ", " \-\-dir =\fIDIR\fP
+Set working directory of command to \fIDIR\fP.
+.TP
+.BR \-e ", " \-\-env =\fIVAR=VALUE\fP
+Run command with given environment variable set;
+may be given multiple times.
+.TP
+.BR \-\-help
+Show help.
+.
+.SH EXAMPLES
+Start firefox as a systemd user service:
+.RS
+.EX
+runapp firefox
+.EE
+.RE
+.PP
+Start \(lqlibreoffice \-\-nosplash\(rq as a systemd user scope,
+with its current working directory set to /tmp:
+.RS
+.EX
+runapp \-\-scope \-\-dir /tmp libreoffice \-\-nosplash
+.EE
+.RE
+.PP
+If you use the
+.MR sway 1
+desktop environment with the
+.MR fuzzel 1
+application launcher, and you add the following line to your
+.B $XDG_CONFIG_HOME/sway/config
+file:
+.RS
+.EX
+bindsym Mod4+d runapp fuzzel \-\-launch\-prefix runapp
+.EE
+.RE
+Then the
+.B Super+D
+key combination will launch Fuzzel via runapp, which in turn will run any
+application it launches via runapp as well.
+.
+.SH ENVIRONMENT
+.TP
+.BR FUZZEL_DESKTOP_FILE_ID
+This environment variable gets set by the
+.MR fuzzel 1
+application launcher.
+If set, it gets used to construct the systemd unit name and description.
+.
+.SH SEE ALSO
+.UR https://systemd.io/DESKTOP_ENVIRONMENTS/#xdg\-standardization\-for\-applications
+systemd recommendations on Desktop Environments
+.UE
+.PP
+.MR systemd 1 ,
+.MR sway 1 ,
+.MR fuzzel 1
