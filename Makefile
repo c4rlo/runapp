@@ -51,9 +51,11 @@ compile_commands.json: Makefile $(cppfiles)
 
 install: build_release/$(prog)
 	$(install_runner) install -D -t $(DESTDIR)$(prefix)/bin $<
+	$(install_runner) install -Dm644 -t $(DESTDIR)$(prefix)/share/man/man1 runapp.1
 
 uninstall:
 	$(install_runner) $(RM) $(DESTDIR)$(prefix)/bin/$(prog) \
+				$(DESTDIR)$(prefix)/share/man/man1/runapp.1
 
 .PHONY: all clean install uninstall $(modes)
 .DELETE_ON_ERROR:
