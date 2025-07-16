@@ -74,8 +74,8 @@ std::optional<std::string> desktopFileID()
 }
 
 
-DBusMessage buildRunRequest(DBus& bus, const std::string& unitName, const std::string& description,
-                            const CmdlineArgs& args)
+DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std::string& description,
+                              const CmdlineArgs& args)
 {
     // Call user systemd via D-Bus. If params.runMode == SERVICE, the call will be
     // equivalent to:
@@ -94,7 +94,7 @@ DBusMessage buildRunRequest(DBus& bus, const std::string& unitName, const std::s
     //
     // In the latter case, instead of passing ExecStart=, we pass a reference to
     // our own PID in PIDFDs=, and we'll then ultimately execute the target program
-    // directly (near the end of main()).
+    // directly.
 
     DBusMessage req = bus.createMethodCall(
             "org.freedesktop.systemd1",
@@ -211,12 +211,12 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
 }
 
 
-void run(const std::string& appName, const CmdlineArgs& args)
+void startUnit(const std::string& appName, const CmdlineArgs& args)
 {
     DBus bus = DBus::systemdUserBus();
 
     const std::string unitName = buildUnitName(appName, args);
-    const DBusMessage req = buildRunRequest(bus, unitName, appName, args);
+    const DBusMessage req = buildStartRequest(bus, unitName, appName, args);
 
     // Set up D-Bus signal handlers so we get to know about the result of
     // starting the job
@@ -258,7 +258,7 @@ void run(const std::string& appName, const CmdlineArgs& args)
     });
     bus.callAsync(req, onStartResponse);
 
-    bus.driveUntil([&jobResult] { return !jobResult.empty(); });
+    bus.driveUntil([&] { return !jobResult.empty(); });
 
     if (jobResult == "failed") {
         throw std::runtime_error("startup failure");
@@ -267,6 +267,24 @@ void run(const std::string& appName, const CmdlineArgs& args)
         throw std::runtime_error(jobResult);
     }
 }
+
+
+void executeCommand(const CmdlineArgs& args)
+{
+    if (args.workingDir) {
+        if (chdir(*args.workingDir) != 0) {
+            throwSystemError("chdir", errno);
+        }
+    }
+    for (const char* env : args.env) {
+        if (putenv(const_cast<char*>(env)) != 0) {
+            throwSystemError("putenv", errno);
+        }
+    }
+    execvp(args.args[0], const_cast<char**>(args.args.data()));
+    throwSystemError("execute program", errno);
+}
+
 
 void notifyErrorFreedesktop(const std::string& errmsg, const std::optional<std::string>& desktopID)
 try {
@@ -296,7 +314,7 @@ try {
     bool done = false;
     auto onResponse = bus.createHandler([&done](DBusMessage&) { done = true; });
     bus.callAsync(req, onResponse);
-    bus.driveUntil([&done] { return done; });
+    bus.driveUntil([&] { return done; });
 }
 catch (const std::exception& e) {
     std::println(std::cerr, "Failed to notify user of error via org.freedesktop.Notifications: {}",
@@ -308,63 +326,48 @@ catch (const std::exception& e) {
 
 int main(int argc, char* argv[])
 {
-    CmdlineArgs cmdlineArgs;
+    std::ios::sync_with_stdio(false);  // We only use C++ streams.
+    std::cout << std::unitbuf;  // Enable flush after output for cout (like cerr).
 
-    {
-        std::ios::sync_with_stdio(false);  // We only use C++ streams.
-        std::cout << std::unitbuf;  // Enable flush after output for cout (like cerr).
-
-        auto args = parseArgs(argc, argv);
-        if (!args) {
-            return 2;
-        }
-        if (args->isHelp) {
-            return 0;
-        }
-
-        g_verbose = args->isVerbose;
-
-        const std::optional<std::string> desktopID = desktopFileID();
-
-        const std::string appName =
-            desktopID ? *desktopID : fs::path(args->args[0]).filename().string();
-
-        try {
-            run(appName, *args);
-            if (!args->isScope) {
-                verbosePrintln("Success.");
-            }
-        }
-        catch (const std::exception& e) {
-            const std::string errmsg =
-                    std::format("Failed to start {}: {}", appName, e.what());
-            std::println(std::cerr, "{}", errmsg);
-            if (!::isatty(STDIN_FILENO)) {
-                verbosePrintln("Notifying user of error via org.freedesktop.Notifications.");
-                notifyErrorFreedesktop(errmsg, desktopID);
-            }
-            return 1;
-        }
-
-        cmdlineArgs = std::move(*args);
+    CmdlineArgs args;
+    if (auto a = parseArgs(argc, argv)) {
+        args = std::move(*a);
+    }
+    else {
+        return 2;
     }
 
-    if (cmdlineArgs.isScope) {
-        verbosePrintln("Executing {}.", cmdlineArgs.args[0]);
-        if (cmdlineArgs.workingDir) {
-            if (chdir(*cmdlineArgs.workingDir) != 0) {
-                reportSystemError("chdir", errno);
-                return 1;
-            }
+    if (args.isHelp) {
+        return 0;
+    }
+
+    g_verbose = args.isVerbose;
+
+    const std::optional<std::string> desktopID = desktopFileID();
+    const std::string appName =
+            desktopID ? *desktopID : fs::path(args.args[0]).filename().string();
+
+    try {
+        // Start transient systemd unit (.service or .scope).
+        startUnit(appName, args);
+
+        if (args.isScope) {
+            // For a scope unit, we now need to execute the command ourselves.
+            verbosePrintln("Executing {}.", args.args[0]);
+            executeCommand(args);
         }
-        for (const char* env : cmdlineArgs.env) {
-            if (putenv(const_cast<char*>(env)) != 0) {
-                reportSystemError("putenv", errno);
-                return 1;
-            }
+        else {
+            verbosePrintln("Success.");
         }
-        execvp(cmdlineArgs.args[0], const_cast<char**>(cmdlineArgs.args.data()));
-        reportSystemError("execute program", errno);
+    }
+    catch (const std::exception& e) {
+        const std::string errmsg =
+                std::format("Failed to start {}: {}", appName, e.what());
+        std::println(std::cerr, "{}", errmsg);
+        if (!::isatty(STDIN_FILENO)) {
+            verbosePrintln("Notifying user of error via org.freedesktop.Notifications.");
+            notifyErrorFreedesktop(errmsg, desktopID);
+        }
         return 1;
     }
 }

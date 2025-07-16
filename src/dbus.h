@@ -41,7 +41,7 @@ class DBus {
 
     void drive();
 
-    void driveUntil(const std::invocable auto& condition)
+    void driveUntil(const std::predicate auto& condition)
     {
         while (!condition()) {
             drive();

@@ -6,6 +6,8 @@ struct CmdlineArgs {
     bool isHelp{};
     bool isVerbose{};
     bool isScope{};
+    // The following 'const char*' pointers all point into the argv,
+    // hence they never go out of scope.
     const char* slice{};
     std::optional<const char*> workingDir;
     std::vector<const char*> env;
