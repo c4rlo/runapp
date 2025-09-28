@@ -63,7 +63,7 @@ Or you can read the man page via `man runapp`.
 
 - If using Arch Linux, install [runapp from the AUR](https://aur.archlinux.org/packages/runapp)
   ([Arch User Repository](https://wiki.archlinux.org/index.php/Arch_User_Repository)).
-- Otherwise, run `make install`. This requires that you have a recent GCC with C++
+- Otherwise, run `make install`. This requires that you have GCC 15 or later with C++
   compiler and GNU Make. You may be prompted for your `sudo` password.
   To uninstall again, run `make uninstall`.
 
