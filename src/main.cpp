@@ -123,7 +123,7 @@ DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std:
 
         if (args.workingDir) {
             req.append("(sv)", "WorkingDirectory", "s",
-                       fs::absolute(*args.workingDir).lexically_normal().c_str());
+                       fs::absolute(*args.workingDir).c_str());
         }
 
         if (!args.env.empty()) {
