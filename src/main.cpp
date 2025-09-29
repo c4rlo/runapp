@@ -12,8 +12,10 @@
 #include <format>
 #include <ios>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <print>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -35,7 +37,7 @@ namespace fs = std::filesystem;
 int throwSystemError(const std::string_view operation, int code)
 {
     throw std::system_error(code, std::system_category(),
-                            std::format("Failed to {}", operation));
+                            std::format("failed to {}", operation));
 }
 
 
@@ -74,21 +76,64 @@ std::optional<std::string> desktopFileID()
 }
 
 
+bool canExecute(const fs::path& p)
+{
+    std::error_code ec;
+    return euidaccess(p.c_str(), X_OK) == 0 && fs::is_regular_file(p, ec);
+}
+
+
+fs::path findExecutableInCwd(const char* filename)
+{
+    const fs::path path(filename);
+    if (!canExecute(path)) {
+        throw std::runtime_error("executable not found or permission denied");
+    }
+    return path;
+}
+
+
+fs::path findExecutableInSearchPath(const char* basename)
+{
+    const char* searchPath = std::getenv("PATH");
+
+    std::unique_ptr<char[]> searchPathBuf;
+    if (!searchPath) {
+        std::size_t len = confstr(_CS_PATH, nullptr, 0);
+        searchPathBuf = std::make_unique_for_overwrite<char[]>(len);
+        if (0 == confstr(_CS_PATH, searchPathBuf.get(), len)) {
+            throwSystemError("determine PATH system fallback value", errno);
+        }
+        searchPath = searchPathBuf.get();
+        verbosePrintln("PATH is not defined, using system fallback value {}", searchPath);
+    }
+
+    for (const auto path : std::string_view(searchPath) | std::views::split(':')) {
+        const auto candidate = fs::path(std::string_view(path)) / basename;
+        if (canExecute(candidate)) {
+            return candidate;
+        }
+    }
+
+    throw std::runtime_error("executable not found in PATH");
+}
+
+
 DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std::string& description,
                               const CmdlineArgs& args)
 {
     // Call user systemd via D-Bus. If params.runMode == SERVICE, the call will be
-    // equivalent to:
+    // approximately equivalent to:
     //
     //   systemd-run --user --unit=${unitName} --description=${description}
-    //     --quiet --same-dir --slice=${slice} --collect
+    //     --quiet --slice=${slice} --collect
     //     --service-type=exec --property=ExitType=cgroup
     //     -- ${argv[1:]}
     //
     // Otherwise (if params.runMode == SCOPE), the call will correspond to:
     //
     //   systemd-run --user --unit=${unitName} --description=${description}
-    //     --quiet --same-dir --slice=${slice} --collect
+    //     --quiet --slice=${slice} --collect
     //     --scope
     //     -- ${argv[1:]}
     //
@@ -121,6 +166,33 @@ DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std:
         req.append("(sv)", "Type", "s", "exec");
         req.append("(sv)", "ExitType", "s", "cgroup");
 
+        const char* arg0 = args.args[0];
+        const fs::path execPath = fs::absolute(
+                std::strchr(arg0, '/') == nullptr
+                ? findExecutableInSearchPath(arg0)
+                : findExecutableInCwd(arg0));
+        verbosePrintln("Resolved executable {} to {}", arg0, execPath.native());
+
+        // Begin ExecStart= property
+        req.openContainer('r', "sv");  // struct { key:string, value:variant }
+        req.append("s", "ExecStart");
+        req.openContainer('v', "a(sasb)");  // variant type: array of
+                                            // { executable:string, argv:array{string}, ignoreFailure:bool }
+        req.openContainer('a', "(sasb)");   // begin the above array (which will contain a single element)
+        req.openContainer('r', "sasb");     // begin array element struct
+        req.append("s", execPath.c_str());  // executable
+        req.openContainer('a', "s");  // begin argv
+        for (const char* arg : args.args) {
+            req.append("s", arg);
+        }
+        req.closeContainer();  // end argv
+        req.append("b", 0);    // ignoreFailure = false
+        req.closeContainer();  // end array element struct
+        req.closeContainer();  // end array
+        req.closeContainer();  // end variant
+        req.closeContainer();  // end key-value struct
+        // End ExecStart= property
+
         if (args.workingDir) {
             req.append("(sv)", "WorkingDirectory", "s",
                        fs::absolute(*args.workingDir).c_str());
@@ -138,26 +210,6 @@ DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std:
             req.closeContainer();  // end variant
             req.closeContainer();  // end struct
         }
-
-        // Begin ExecStart= property
-        req.openContainer('r', "sv");  // struct { key:string, value:variant }
-        req.append("s", "ExecStart");
-        req.openContainer('v', "a(sasb)");  // variant type: array of
-                                            // { executable:string, argv:array{string}, ignoreFailure:bool }
-        req.openContainer('a', "(sasb)");   // begin the above array (which will contain a single element)
-        req.openContainer('r', "sasb");     // begin array element struct
-        req.append("s", args.args[0]);     // executable
-        req.openContainer('a', "s");  // begin argv
-        for (const char* arg : args.args) {
-            req.append("s", arg);
-        }
-        req.closeContainer();  // end argv
-        req.append("b", 0);    // ignoreFailure = false
-        req.closeContainer();  // end array element struct
-        req.closeContainer();  // end array
-        req.closeContainer();  // end variant
-        req.closeContainer();  // end key-value struct
-        // End ExecStart= property
     }
 
     req.closeContainer();
@@ -345,7 +397,7 @@ int main(int argc, char* argv[])
 
     const std::optional<std::string> desktopID = desktopFileID();
     const std::string appName =
-            desktopID ? *desktopID : fs::path(args.args[0]).filename().string();
+            desktopID ? *desktopID : fs::path(args.args[0]).filename().native();
 
     try {
         // Start transient systemd unit (.service or .scope).
