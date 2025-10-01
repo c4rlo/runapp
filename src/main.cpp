@@ -34,19 +34,10 @@ namespace {
 namespace fs = std::filesystem;
 
 
-int throwSystemError(const std::string_view operation, int code)
+int throwSystemError(std::string_view operation, int code)
 {
-    throw std::system_error(code, std::system_category(),
+    throw std::system_error(code, std::generic_category(),
                             std::format("failed to {}", operation));
-}
-
-
-void reportSystemError(std::string_view action, int code)
-{
-    if (code != 0) {
-        std::println(std::cerr, "Failed to {}: {}", action,
-                     std::error_code(code, std::system_category()).message());
-    }
 }
 
 
@@ -54,7 +45,8 @@ struct FdGuard {
     int fd;
     ~FdGuard() {
         if (close(fd) != 0) {
-            reportSystemError("close file descriptor", errno);
+            std::println(std::cerr, "Failed to close file descriptor: {}",
+                         std::generic_category().message(errno));
         }
     }
 };
@@ -62,38 +54,45 @@ struct FdGuard {
 
 std::optional<std::string> desktopFileID()
 {
-    if (const char* dfid = std::getenv("FUZZEL_DESKTOP_FILE_ID")) {
-        const char ext[] = ".desktop";
-        const std::size_t extLen = sizeof(ext) - 1;
-        if (std::strlen(dfid) > extLen) {
-            const std::size_t dfidLen = std::strlen(dfid);
-            if (std::strcmp(dfid + dfidLen - extLen, ext) == 0) {
-                return std::string(dfid, dfidLen - extLen);
-            }
+    if (const char* dfidEnv = std::getenv("FUZZEL_DESKTOP_FILE_ID")) {
+        std::string_view dfid = dfidEnv, ext = ".desktop";
+        if (dfid.ends_with(ext)) {
+            dfid.remove_suffix(ext.length());
+            return std::string(dfid);
         }
     }
+
     return {};
 }
 
 
-bool canExecute(const fs::path& p)
+bool canExecute(const fs::path& path, std::error_code& ec)
 {
-    std::error_code ec;
-    return euidaccess(p.c_str(), X_OK) == 0 && fs::is_regular_file(p, ec);
+    if (euidaccess(path.c_str(), X_OK) != 0) {
+        ec = std::make_error_code(std::errc(errno));
+        return false;
+    }
+
+    const bool result = fs::is_regular_file(path, ec);
+    if (!result && !ec) {
+        ec = std::make_error_code(std::errc::permission_denied);
+    }
+    return result;
 }
 
 
-fs::path findExecutableInCwd(const char* filename)
+fs::path findExecutableInCwd(std::string_view filename)
 {
     const fs::path path(filename);
-    if (!canExecute(path)) {
-        throw std::runtime_error("executable not found or permission denied");
+    std::error_code ec;
+    if (!canExecute(path, ec)) {
+        throw std::system_error(ec, std::string(filename));
     }
     return path;
 }
 
 
-fs::path findExecutableInSearchPath(const char* basename)
+fs::path findExecutableInSearchPath(std::string_view basename)
 {
     const char* searchPath = std::getenv("PATH");
 
@@ -110,12 +109,14 @@ fs::path findExecutableInSearchPath(const char* basename)
 
     for (const auto path : std::string_view(searchPath) | std::views::split(':')) {
         const auto candidate = fs::path(std::string_view(path)) / basename;
-        if (canExecute(candidate)) {
+        std::error_code ec;
+        if (canExecute(candidate, ec)) {
             return candidate;
         }
     }
 
-    throw std::runtime_error("executable not found in PATH");
+    throw std::system_error(std::make_error_code(std::errc::no_such_file_or_directory),
+                            std::string(basename));
 }
 
 
@@ -166,11 +167,11 @@ DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std:
         req.append("(sv)", "Type", "s", "exec");
         req.append("(sv)", "ExitType", "s", "cgroup");
 
-        const char* arg0 = args.args[0];
+        const std::string_view arg0 = args.args[0];
         const fs::path execPath = fs::absolute(
-                std::strchr(arg0, '/') == nullptr
-                ? findExecutableInSearchPath(arg0)
-                : findExecutableInCwd(arg0));
+                arg0.contains('/')
+                ? findExecutableInCwd(arg0)
+                : findExecutableInSearchPath(arg0));
         verbosePrintln("Resolved executable {} to {}", arg0, execPath.native());
 
         // Begin ExecStart= property
@@ -228,7 +229,7 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
 
     std::string unitPrefix = "app-";
     if (const char* xdgCurrDesktop = std::getenv("XDG_CURRENT_DESKTOP")) {
-        unitPrefix.append(xdgCurrDesktop, ::strchrnul(xdgCurrDesktop, ':') - xdgCurrDesktop);
+        unitPrefix.append(xdgCurrDesktop, std::strcspn(xdgCurrDesktop, ":"));
         unitPrefix += '-';
     }
     unitPrefix += appName;
@@ -250,7 +251,7 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
     }
 
     std::uint64_t randU64;
-    if (::getentropy(&randU64, sizeof randU64) != 0) {
+    if (getentropy(&randU64, sizeof randU64) != 0) {
         throwSystemError("get random bytes", errno);
     }
 
@@ -271,7 +272,7 @@ void startUnit(const std::string& appName, const CmdlineArgs& args)
     const DBusMessage req = buildStartRequest(bus, unitName, appName, args);
 
     // Set up D-Bus signal handlers so we get to know about the result of
-    // starting the job
+    // starting the job.
 
     std::string jobPath, jobResult;
 
@@ -315,7 +316,7 @@ void startUnit(const std::string& appName, const CmdlineArgs& args)
     if (jobResult == "failed") {
         throw std::runtime_error("startup failure");
     }
-    else if (jobResult != "done") {
+    if (jobResult != "done") {
         throw std::runtime_error(jobResult);
     }
 }
@@ -416,7 +417,7 @@ int main(int argc, char* argv[])
         const std::string errmsg =
                 std::format("Failed to start {}: {}", appName, e.what());
         std::println(std::cerr, "{}", errmsg);
-        if (!::isatty(STDIN_FILENO)) {
+        if (!isatty(STDIN_FILENO)) {
             verbosePrintln("Notifying user of error via org.freedesktop.Notifications.");
             notifyErrorFreedesktop(errmsg, desktopID);
         }
