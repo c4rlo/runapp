@@ -23,8 +23,10 @@
 #include <system_error>
 
 extern "C" {
+#include <fcntl.h>
 #include <sys/pidfd.h>
 #include <sys/random.h>
+#include <sys/stat.h>
 #include <unistd.h>
 }
 
@@ -68,16 +70,30 @@ std::optional<std::string> desktopFileID()
 
 bool canExecute(const fs::path& path, std::error_code& ec)
 {
-    if (euidaccess(path.c_str(), X_OK) != 0) {
+    // Check that the given path points to a regular file that is executable
+    // by the current effective uid/gid.
+    // Note that glibc includes an 'euidaccess()' function, but we don't use
+    // it because its implementation appears incomplete (does not check ACLs).
+
+    const int fd = open(path.c_str(), O_PATH);
+    if (fd == -1) {
+        ec = std::make_error_code(std::errc(errno));
+        return false;
+    }
+    FdGuard fdGuard{fd};
+
+    struct stat st;
+    if (faccessat(fd, "", X_OK, AT_EMPTY_PATH | AT_EACCESS) != 0 || fstat(fd, &st) != 0) {
         ec = std::make_error_code(std::errc(errno));
         return false;
     }
 
-    const bool result = fs::is_regular_file(path, ec);
-    if (!result && !ec) {
+    if (!S_ISREG(st.st_mode)) {
         ec = std::make_error_code(std::errc::permission_denied);
+        return false;
     }
-    return result;
+
+    return true;
 }
 
 
