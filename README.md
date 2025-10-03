@@ -22,14 +22,20 @@ latency and resource usage.
 ## Usage
 
 If you use [Sway](https://swaywm.org/) with [Fuzzel](https://codeberg.org/dnkl/fuzzel), you might
-include something like the following in your `.config/sway/config` file:
+include something like the following in your `~/.config/sway/config` file:
 
 ```
-bindsym Mod4+d runapp fuzzel --launch-prefix runapp
+bindsym Mod4+d exec runapp fuzzel --launch-prefix runapp
 ```
 
 This will launch Fuzzel via `runapp` when the `Super+D` key combination is pressed, and tells Fuzzel
 to run any application it launches via `runapp` as well.
+
+If you have other applications bound to hotkeys, you may also want to run those under `runapp`, e.g.:
+
+```
+bindsym Mod4+Return exec runapp foot
+```
 
 Variants of the above will apply for other combinations of desktop compositors and application
 launchers.
