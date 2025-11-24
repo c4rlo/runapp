@@ -16,7 +16,6 @@
 #include <optional>
 #include <print>
 #include <ranges>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -54,13 +53,18 @@ struct FdGuard {
 };
 
 
-std::optional<std::string> desktopFileID()
+std::optional<std::string> envDesktopEntryID()
 {
-    if (const char* dfidEnv = std::getenv("FUZZEL_DESKTOP_FILE_ID")) {
-        std::string_view dfid = dfidEnv, ext = ".desktop";
-        if (dfid.ends_with(ext)) {
-            dfid.remove_suffix(ext.length());
-            return std::string(dfid);
+    const char* envValue = std::getenv("DESKTOP_ENTRY_ID");
+    if (!envValue) {
+        envValue = std::getenv("FUZZEL_DESKTOP_FILE_ID");
+    }
+
+    if (envValue) {
+        std::string_view entryID = envValue, ext = ".desktop";
+        if (entryID.ends_with(ext)) {
+            entryID.remove_suffix(ext.length());
+            return std::string(entryID);
         }
     }
 
@@ -136,22 +140,22 @@ fs::path findExecutableInSearchPath(std::string_view basename)
 }
 
 
-DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std::string& description,
+DBusMessage buildStartRequest(DBus& bus, const char* unitName, const char* description,
                               const CmdlineArgs& args)
 {
-    // Call user systemd via D-Bus. If params.runMode == SERVICE, the call will be
-    // approximately equivalent to:
-    //
-    //   systemd-run --user --unit=${unitName} --description=${description}
-    //     --quiet --slice=${slice} --collect
-    //     --service-type=exec --property=ExitType=cgroup
-    //     -- ${argv[1:]}
-    //
-    // Otherwise (if params.runMode == SCOPE), the call will correspond to:
+    // Call user systemd via D-Bus. If args.isScope, the call will be approximately
+    // equivalent to:
     //
     //   systemd-run --user --unit=${unitName} --description=${description}
     //     --quiet --slice=${slice} --collect
     //     --scope
+    //     -- ${argv[1:]}
+    //
+    // Otherwise, the call will correspond to:
+    //
+    //   systemd-run --user --unit=${unitName} --description=${description}
+    //     --quiet --slice=${slice} --collect
+    //     --service-type=exec --property=ExitType=cgroup
     //     -- ${argv[1:]}
     //
     // In the latter case, instead of passing ExecStart=, we pass a reference to
@@ -163,13 +167,13 @@ DBusMessage buildStartRequest(DBus& bus, const std::string& unitName, const std:
             "/org/freedesktop/systemd1",
             "org.freedesktop.systemd1.Manager",
             "StartTransientUnit");
-    req.append("ss", unitName.c_str(), "fail"); // 'name' and 'mode' args
+    req.append("ss", unitName, "fail"); // 'name' and 'mode' args
 
     // Begin unit properties ('properties' arg)
     req.openContainer('a', "(sv)");  // array of struct { key:string, value:variant }
-    req.append("(sv)", "Description", "s", description.c_str());
+    req.append("(sv)", "Description", "s", description);
     req.append("(sv)", "CollectMode", "s", "inactive-or-failed");
-    req.append("(sv)", "Slice", "s", args.slice);
+    req.append("(sv)", "Slice", "s", args.slice.value_or("app-graphical.slice"));
 
     if (args.isScope) {
         const int pfd = pidfd_open(getpid(), 0);
@@ -251,7 +255,8 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
     unitPrefix += appName;
 
     // https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Description says:
-    //   The "unit name prefix" must consist of one or more valid characters (ASCII letters, digits, ":", "-", "_", ".", and "\").
+    //   The "unit name prefix" must consist of one or more valid characters
+    //   (ASCII letters, digits, ":", "-", "_", ".", and "\").
     const auto isInvalidChar = [](char c) {
         return !(('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
                  || std::strchr(":-_.\\", c) != nullptr);
@@ -260,7 +265,8 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
 
     // https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Description says:
     //   The total length of the unit name including the suffix must not exceed 255 characters.
-    // We are about to append a random string and a suffix (".service" or ".scope"), so account for that.
+    // We are about to append a random string and a suffix (".service" or ".scope"),
+    // so account for that.
     const std::size_t maxPrefixLen = 220;
     if (unitPrefix.size() > maxPrefixLen) {
         unitPrefix.resize(maxPrefixLen);
@@ -280,12 +286,11 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
 }
 
 
-void startUnit(const std::string& appName, const CmdlineArgs& args)
+void startUnit(const char* unitName, const char* description, const CmdlineArgs& args)
 {
     DBus bus = DBus::systemdUserBus();
 
-    const std::string unitName = buildUnitName(appName, args);
-    const DBusMessage req = buildStartRequest(bus, unitName, appName, args);
+    const DBusMessage req = buildStartRequest(bus, unitName, description, args);
 
     // Set up D-Bus signal handlers so we get to know about the result of
     // starting the job.
@@ -314,10 +319,10 @@ void startUnit(const std::string& appName, const CmdlineArgs& args)
         "Disconnected", onDisconnected);
 
     if (args.isScope) {
-        verbosePrintln("Starting {}; will execute: {}.", unitName, args.args);
+        verbosePrintln("Starting {}; will execute: {}.", description, args.args);
     }
     else {
-        verbosePrintln("Launching {}: {}.", unitName, args.args);
+        verbosePrintln("Launching {}: {}.", description, args.args);
     }
 
     auto onStartResponse = bus.createHandler([&jobPath](DBusMessage& resp) {
@@ -412,13 +417,16 @@ int main(int argc, char* argv[])
 
     g_verbose = args.isVerbose;
 
-    const std::optional<std::string> desktopID = desktopFileID();
+    const std::optional<std::string> desktopID = envDesktopEntryID();
     const std::string appName =
             desktopID ? *desktopID : fs::path(args.args[0]).filename().native();
 
+    const char* description = args.description.value_or(appName.c_str());
+
     try {
         // Start transient systemd unit (.service or .scope).
-        startUnit(appName, args);
+        const std::string unitName = buildUnitName(appName, args);
+        startUnit(unitName.c_str(), description, args);
 
         if (args.isScope) {
             // For a scope unit, we now need to execute the command ourselves.
@@ -431,7 +439,7 @@ int main(int argc, char* argv[])
     }
     catch (const std::exception& e) {
         const std::string errmsg =
-                std::format("Failed to start {}: {}", appName, e.what());
+                std::format("Failed to start {}: {}", description, e.what());
         std::println(std::cerr, "{}", errmsg);
         if (!isatty(STDIN_FILENO)) {
             verbosePrintln("Notifying user of error via org.freedesktop.Notifications.");

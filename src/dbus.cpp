@@ -16,7 +16,7 @@ namespace {
 void check(int rc, const char* operation)
 {
     if (rc < 0) {
-        throw std::system_error(-rc, std::system_category(),
+        throw std::system_error(-rc, std::generic_category(),
                                 std::format("Failed to {}", operation));
     }
 }

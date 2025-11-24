@@ -33,11 +33,14 @@ Assign the systemd unit to the given slice (name must include
 \(lq.slice\(rq suffix); the default is \(lqapp\-graphical.slice\(rq.
 .TP
 .BR \-d ", " \-\-dir =\fIDIR\fP
-Set working directory of command to \fIDIR\fP.
+Run command in given working directory.
 .TP
 .BR \-e ", " \-\-env =\fIVAR=VALUE\fP
 Run command with given environment variable set;
 may be given multiple times.
+.TP
+.BR \-c ", " \-\-description =\fIDESCRIPTION\fP
+Set human\-readable unit name (Description= systemd property) to given value.
 .TP
 .BR \-\-help
 Show help.
@@ -46,6 +49,7 @@ Show help.
 Start firefox as a systemd user service:
 .RS
 .EX
+.B
 runapp firefox
 .EE
 .RE
@@ -54,6 +58,7 @@ Start \(lqlibreoffice \-\-nosplash\(rq as a systemd user scope,
 with its current working directory set to /tmp:
 .RS
 .EX
+.B
 runapp \-\-scope \-\-dir /tmp libreoffice \-\-nosplash
 .EE
 .RE
@@ -67,6 +72,7 @@ application launcher, and you add the following line to your
 file:
 .RS
 .EX
+.B
 bindsym Mod4+d exec runapp fuzzel \-\-launch\-prefix runapp
 .EE
 .RE
@@ -77,11 +83,31 @@ application it launches via runapp as well.
 .
 .SH ENVIRONMENT
 .TP
-.BR FUZZEL_DESKTOP_FILE_ID
-This environment variable gets set by the
+.I DESKTOP_ENTRY_ID
+If set, used to construct the systemd unit name (otherwise, the executable
+basename is used for this purpose).
+Exported by the
 .MR fuzzel 1
-application launcher.
-If set, it gets used to construct the systemd unit name and description.
+application launcher (version 1.14.0 or greater; unreleased as of this writing)
+and perhaps others.
+.TP
+.I DESKTOP_ENTRY_NAME
+If set, used as the Description= property of the generated systemd unit.
+Overridden by the
+.B \-\-description
+option.
+Similarly to
+.IR DESKTOP_ENTRY_ID ,
+exported by
+.MR fuzzel 1 .
+.TP
+.I FUZZEL_DESKTOP_FILE_ID
+Legacy spelling of
+.IR DESKTOP_ENTRY_ID ;
+accepted as a fallback.
+Exported by
+.MR fuzzel 1 ,
+but now considered deprecated by it.
 .
 .SH SEE ALSO
 .UR https://systemd.io/DESKTOP_ENVIRONMENTS/#xdg\-standardization\-for\-applications

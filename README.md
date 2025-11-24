@@ -12,7 +12,7 @@ A great complement to runapp is [uwsm](https://github.com/Vladimir-csp/uwsm), wh
 an easy way to run your Wayland compositor as well as user services and applications under systemd.
 
 In fact, runapp is inspired by `uwsm app`, which has a similar feature set. However, compared to
-it and other alternatives, runapp is very fast (native executable written in C++) and has minimal
+it and other alternatives, runapp is very fast (native executable written in modern C++) and has minimal
 dependencies (only systemd, no Python, binary is <200K).
 
 ## Installation
@@ -21,8 +21,7 @@ dependencies (only systemd, no Python, binary is <200K).
   ([Arch User Repository](https://wiki.archlinux.org/index.php/Arch_User_Repository)).
 - NixOS: [runapp is being added to nixpkgs](https://github.com/NixOS/nixpkgs/pull/447721).
 - Other: Run `make install`.
-  - This requires that you have GCC 15 or later with C++
-  compiler and GNU Make.
+  - This requires that you have GCC 15 or later with C++ compiler and GNU Make.
   - You may be prompted for your `sudo` password.
   - To uninstall again, run `make uninstall`.
 
@@ -35,8 +34,8 @@ To verify this, check that the output of `systemctl --user show-environment` inc
 `WAYLAND_DISPLAY` (if using Wayland) or `DISPLAY` (if using Xorg), as well as anything else your
 compositor may require (e.g. Sway needs `SWAYSOCK`, i3 needs `I3SOCK`).
 
-If something is missing,
-review your compositor setup; I recommend using [uwsm](https://github.com/Vladimir-csp/uwsm) and following its setup instructions, which
+If something is missing, review your compositor setup; I recommend using
+[uwsm](https://github.com/Vladimir-csp/uwsm) and following its setup instructions, which
 will take care of everything.
 
 ## Usage
@@ -86,10 +85,13 @@ runapp [OPTIONS] COMMAND...
                    Assign the systemd unit to the given slice (name must include
                    ".slice" suffix); the default is "app-graphical.slice".
     -d DIR, --dir=DIR:
-                   Set working directory of command to DIR.
+                   Run command in given working directory.
     -e VAR=VALUE, --env=VAR=VALUE:
                    Run command with given environment variable set;
                    may be given multiple times.
+    -c DESC, --description=DESC:
+                   Set human-readable unit name (Description= systemd property)
+                   to given value.
 
 runapp --help
     Show this help text.
@@ -143,31 +145,33 @@ unfortunately not sufficiently customizable to allow interposing `runapp`.
 
 ## Features
 
-- Fast: native code (written in C++); talks directly to systemd, via its private socket if available, the same way that `systemd-run` does.
+- Fast: native code (written in moden C++);
+  talks directly to systemd, via its private socket if available, the same way that `systemd-run` does.
 - No dependencies beyond systemd.
 - Run app either as systemd [service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
   (recommended, default) or as systemd [scope](https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html).
     - The latter means `runapp` directly executes the application, after registering it with systemd.
-- Run app either under `app-graphical.slice` (recommended for most cases, default) or under any other slice.
-- Option to run app in given working directory.
-- Option to run app with given environment variables.
-- If run from Fuzzel, derive unit name from `.desktop` name, per systemd recommendations.
-- On error, if not run from interactive terminal, show desktop notification.
+- If run from Fuzzel, or any other launcher that passes the same environment variables (see man page for details):
+    - Generate systemd unit name from `.desktop` name, per systemd recommendations.
+    - Take "friendly name" (`Description=` systemd unit property) from `.desktop` file's `Name=` value.
+- Options to customize several aspects of the execution context:
+    - Working directory
+    - Environment variables
+    - `Description=` systemd property
+    - systemd slice (defaults to systemd-recommended `app-graphical.slice`)
+- On error, show desktop notification (unless run from interactive terminal).
 
 ## Non-features
 
 I don't consider these very important to have, but I'm open to discussions (feel free to open an issue!).
 
-- Support custom unit name / description.
-- Unit description: derive from `.desktop` file.
-  - For Fuzzel, would be made much easier (and more performant) with https://codeberg.org/dnkl/fuzzel/issues/292
+- Support custom unit name.
 - Support being given a Desktop File ID (only).
   - With optional Action ID
 - Support running `.desktop` files with args, using field codes.
   - See https://specifications.freedesktop.org/desktop-entry-spec/latest/exec-variables.html
   - Note that `%f` and `%u` entail running multiple app instances
   - Alternatively, this could be done by the launcher, e.g. Fuzzel: https://codeberg.org/dnkl/fuzzel/issues/346
-- Alternative ways of accepting Desktop File ID (beyond Fuzzel).
 - Support running app connected to terminal, like `systemd-run --pty`.
 
 ## Alternatives

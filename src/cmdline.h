@@ -6,10 +6,11 @@ struct CmdlineArgs {
     bool isHelp{};
     bool isVerbose{};
     bool isScope{};
-    // The following 'const char*' pointers all point into the argv,
+    // The following 'const char*' pointers all point into static storage,
     // hence they never go out of scope.
-    const char* slice{};
+    std::optional<const char*> slice;
     std::optional<const char*> workingDir;
+    std::optional<const char*> description;
     std::vector<const char*> env;
     std::span<const char*> args;  // the element one past the end is guaranteed to be null
 };

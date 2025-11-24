@@ -1,5 +1,6 @@
 #include "cmdline.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <print>
 #include <string_view>
@@ -21,15 +22,16 @@ constexpr char UsageStr[] =
     "                   Assign the systemd unit to the given slice (name must include\n"
     "                   \".slice\" suffix); the default is \"app-graphical.slice\".\n"
     "    -d DIR, --dir=DIR:\n"
-    "                   Set working directory of command to DIR.\n"
+    "                   Run command in given working directory.\n"
     "    -e VAR=VALUE, --env=VAR=VALUE:\n"
     "                   Run command with given environment variable set;\n"
     "                   may be given multiple times.\n"
+    "    -c DESC, --description=DESC:\n"
+    "                   Set human-readable unit name (Description= systemd property)\n"
+    "                   to given value.\n"
     "\n"
     "{0} --help\n"
     "    Show this help text.\n";
-
-constexpr char DefaultSlice[] = "app-graphical.slice";
 
 }
 
@@ -45,15 +47,16 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
     // The subsequent ':' makes getopt_long() not print parse errors
     // directly but instead return either '?' or ':' for different kinds
     // of errors.
-    const char* shortOptions = "+:voi:d:e:";
+    const char* shortOptions = "+:voi:d:e:c:";
 
     const option longOptions[] = {
-        { "help",    no_argument,       nullptr, 'h' },
-        { "verbose", no_argument,       nullptr, 'v' },
-        { "scope",   no_argument,       nullptr, 'o' },
-        { "slice",   required_argument, nullptr, 'i' },
-        { "dir",     required_argument, nullptr, 'd' },
-        { "env",     required_argument, nullptr, 'e' },
+        { "help",        no_argument,       nullptr, 'h' },
+        { "verbose",     no_argument,       nullptr, 'v' },
+        { "scope",       no_argument,       nullptr, 'o' },
+        { "slice",       required_argument, nullptr, 'i' },
+        { "dir",         required_argument, nullptr, 'd' },
+        { "env",         required_argument, nullptr, 'e' },
+        { "description", required_argument, nullptr, 'c' },
         { }
     };
 
@@ -81,8 +84,13 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
 
     int opt{};
 
-    const auto printErrOptionOnce = [&]() {
-        printErr("-{}/--{} may only be given once", char(opt), shortToLongOption(opt));
+    const auto checkAssignOnce = [&](auto& option, const auto& value) {
+        if (option) {
+            printErr("-{}/--{} may only be given once", char(opt), shortToLongOption(opt));
+            return false;
+        }
+        option = value;
+        return true;
     };
 
     while ((opt = getopt_long(argc, argv, shortOptions, longOptions, nullptr)) != -1) {
@@ -91,36 +99,28 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
             args.isHelp = true;
             break;
         case 'v':
-            if (args.isVerbose) {
-                printErrOptionOnce();
+            if (!checkAssignOnce(args.isVerbose, true)) {
                 return {};
             }
-            args.isVerbose = true;
             break;
         case 'o':
-            if (args.isScope) {
-                printErrOptionOnce();
+            if (!checkAssignOnce(args.isScope, true)) {
                 return {};
             }
-            args.isScope = true;
             break;
         case 'i':
-            if (args.slice) {
-                printErrOptionOnce();
+            if (!checkAssignOnce(args.slice, optarg)) {
                 return {};
             }
-            if (!std::string_view(optarg).ends_with(".slice")) {
+            if (!std::string_view(args.slice.value()).ends_with(".slice")) {
                 printErr("--i/--slice argument must end with \".slice\"");
                 return {};
             }
-            args.slice = optarg;
             break;
         case 'd':
-            if (args.workingDir) {
-                printErrOptionOnce();
+            if (!checkAssignOnce(args.workingDir, optarg)) {
                 return {};
             }
-            args.workingDir = optarg;
             break;
         case 'e':
             if (!std::string_view(optarg).contains('=')) {
@@ -128,6 +128,11 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
                 return {};
             }
             args.env.push_back(optarg);
+            break;
+        case 'c':
+            if (!checkAssignOnce(args.description, optarg)) {
+                return {};
+            }
             break;
         case '?':
             if (optopt == 0) {
@@ -148,8 +153,8 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
     }
 
     if (args.isHelp) {
-        if (optind < argc || args.isVerbose || args.isScope || args.slice || args.workingDir
-            || !args.env.empty())
+        if (optind < argc || args.isVerbose || args.isScope || args.slice
+            || args.workingDir || args.description || !args.env.empty())
         {
             printErr("--help may not be combined with any other options or arguments");
             return {};
@@ -163,8 +168,10 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
         return {};
     }
 
-    if (!args.slice) {
-        args.slice = DefaultSlice;
+    if (!args.description) {
+        if (const char* envName = std::getenv("DESKTOP_ENTRY_NAME")) {
+            args.description = envName;
+        }
     }
 
     args.args = std::span(const_cast<const char**>(&argv[optind]), argc - optind);
