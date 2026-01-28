@@ -19,7 +19,7 @@ dependencies (only systemd, no Python, binary is <200K).
 
 - Arch Linux: [Get runapp from the AUR](https://aur.archlinux.org/packages/runapp)
   ([Arch User Repository](https://wiki.archlinux.org/index.php/Arch_User_Repository)).
-- NixOS: [runapp is being added to nixpkgs](https://github.com/NixOS/nixpkgs/pull/447721).
+- NixOS: [Get runapp from nixpkgs](https://search.nixos.org/packages?channel=unstable&show=runapp&query=runapp).
 - Other: Run `make install`.
   - This requires that you have GCC 15 or later with C++ compiler and GNU Make.
   - You may be prompted for your `sudo` password.
@@ -145,7 +145,7 @@ unfortunately not sufficiently customizable to allow interposing `runapp`.
 
 ## Features
 
-- Fast: native code (written in moden C++);
+- Fast: native code (written in modern C++);
   talks directly to systemd, via its private socket if available, the same way that `systemd-run` does.
 - No dependencies beyond systemd.
 - Run app either as systemd [service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)

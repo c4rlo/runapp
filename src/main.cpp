@@ -158,7 +158,7 @@ DBusMessage buildStartRequest(DBus& bus, const char* unitName, const char* descr
     //     --service-type=exec --property=ExitType=cgroup
     //     -- ${argv[1:]}
     //
-    // In the latter case, instead of passing ExecStart=, we pass a reference to
+    // In the former case, instead of passing ExecStart=, we pass a reference to
     // our own PID in PIDFDs=, and we'll then ultimately execute the target program
     // directly.
 
