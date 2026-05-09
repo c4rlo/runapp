@@ -113,7 +113,7 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
                 return {};
             }
             if (!std::string_view(args.slice.value()).ends_with(".slice")) {
-                printErr("--i/--slice argument must end with \".slice\"");
+                printErr("-i/--slice argument must end with \".slice\"");
                 return {};
             }
             break;
