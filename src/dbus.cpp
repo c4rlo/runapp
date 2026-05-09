@@ -107,7 +107,7 @@ void DBus::matchSignalAsync(
 void DBus::drive()
 {
     while (true) {
-        int rc = sd_bus_process(d_bus.get(), nullptr);
+        const int rc = sd_bus_process(d_bus.get(), nullptr);
         check(rc, "process D-Bus messages");
         if (d_exception) {
             std::exception_ptr e;
@@ -180,7 +180,7 @@ void DBusMessage::read(const char* types, ...)
 {
     std::va_list args;
     va_start(args, types);
-    int rc = sd_bus_message_readv(d_msg.get(), types, args);
+    const int rc = sd_bus_message_readv(d_msg.get(), types, args);
     va_end(args);
     check(rc, "read D-Bus message field");
     if (rc == 0) {
@@ -192,7 +192,7 @@ void DBusMessage::append(const char* types, ...)
 {
     std::va_list args;
     va_start(args, types);
-    int rc = sd_bus_message_appendv(d_msg.get(), types, args);
+    const int rc = sd_bus_message_appendv(d_msg.get(), types, args);
     va_end(args);
     check(rc, "append D-Bus message field");
 }

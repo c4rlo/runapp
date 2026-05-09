@@ -1,0 +1,23 @@
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-unchecked-optional-access,
+  misc-*,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  modernize-*,
+  -modernize-avoid-c-arrays,
+  -modernize-avoid-c-style-cast,
+  -modernize-avoid-variadic-functions,
+  -modernize-return-braced-init-list,
+  -modernize-use-designated-initializers,
+  -modernize-use-trailing-return-type,
+  performance-*,
+  portability-*,
+
+WarningsAsErrors: '*'
+
+# clang does not understand some of our compiler flags:
+RemovedArgs: [-fhardened, -Wcast-align=strict, -Wlogical-op, -Wuseless-cast]

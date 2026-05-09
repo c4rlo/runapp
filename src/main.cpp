@@ -84,7 +84,7 @@ bool canExecute(const fs::path& path, std::error_code& ec)
         ec = std::make_error_code(std::errc(errno));
         return false;
     }
-    FdGuard fdGuard{fd};
+    const FdGuard fdGuard{fd};
 
     struct stat st;
     if (faccessat(fd, "", X_OK, AT_EMPTY_PATH | AT_EACCESS) != 0 || fstat(fd, &st) != 0) {
@@ -118,7 +118,7 @@ fs::path findExecutableInSearchPath(std::string_view basename)
 
     std::unique_ptr<char[]> searchPathBuf;
     if (!searchPath) {
-        std::size_t len = confstr(_CS_PATH, nullptr, 0);
+        const std::size_t len = confstr(_CS_PATH, nullptr, 0);
         searchPathBuf = std::make_unique_for_overwrite<char[]>(len);
         if (0 == confstr(_CS_PATH, searchPathBuf.get(), len)) {
             throwSystemError("determine PATH system fallback value", errno);
@@ -180,7 +180,7 @@ DBusMessage buildStartRequest(DBus& bus, const char* unitName, const char* descr
         if (pfd == -1) {
             throwSystemError("get pidfd", errno);
         }
-        FdGuard pfdGuard{pfd};
+        const FdGuard pfdGuard{pfd};
         req.append("(sv)", "PIDFDs", "ah", 1, pfd);  // this duplicates the pfd file descriptor
     }
     else {
@@ -261,7 +261,7 @@ std::string buildUnitName(const std::string& appName, const CmdlineArgs& args)
         return !(('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
                  || std::strchr(":-_.\\", c) != nullptr);
     };
-    std::replace_if(unitPrefix.begin(), unitPrefix.end(), isInvalidChar, '_');
+    std::ranges::replace_if(unitPrefix, isInvalidChar, '_');
 
     // https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Description says:
     //   The total length of the unit name including the suffix must not exceed 255 characters.

@@ -60,7 +60,7 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
         { }
     };
 
-    const auto shortToLongOption = [&](char c) -> const char* {
+    const auto shortToLongOption = [&](int c) -> const char* {
         for (const option& o : longOptions) {
             if (o.val == c) {
                 return o.name;
@@ -144,7 +144,7 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
             return {};
         case ':':
             printErr("Missing argument for option: -{}/--{}",
-                     char(optopt), shortToLongOption(char(optopt)));
+                     char(optopt), shortToLongOption(optopt));
             return {};
         default:
             printErr("Unknown argument parsing error");

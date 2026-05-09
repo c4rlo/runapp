@@ -188,9 +188,10 @@ I don't consider these very important to have, but I'm open to discussions (feel
 Prerequisites: GCC 15 or later with C++ compiler, and GNU Make.
 
 - `make debug`: create debug build.
-- `make compile_commands.json`: generate [`compile_commands.json`](https://clang.llvm.org/docs/JSONCompilationDatabase.html) file,
-  useful for language servers like [`clangd`](https://clangd.llvm.org/); requires [`bear`](https://github.com/rizsotto/Bear).
 - `make release`: create release build.
 - `make clean`: delete all build artefacts.
+- `make lint`: run [clang-tidy](https://clang.llvm.org/extra/clang-tidy/) linter.
+- `make compile_commands.json`: generate [`compile_commands.json`](https://clang.llvm.org/docs/JSONCompilationDatabase.html) file,
+  useful for language servers like [`clangd`](https://clangd.llvm.org/); requires [`bear`](https://github.com/rizsotto/Bear).
 - `make install`: install release build into `/usr/local` (or override via `prefix` variable).
 - `make uninstall`: delete installed release build.

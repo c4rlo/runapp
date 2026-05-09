@@ -49,6 +49,9 @@ all: $(modes)
 clean:
 	$(RM) -r $(build_dirs) compile_commands.json
 
+lint: $(cppfiles) compile_commands.json
+	clang-tidy --quiet $(cppfiles)
+
 compile_commands.json: Makefile $(cppfiles)
 	bear -- $(MAKE) -B $(objects_debug)
 
@@ -61,5 +64,5 @@ uninstall:
 		$(DESTDIR)$(prefix)/bin/$(prog) \
 		$(DESTDIR)$(prefix)/share/man/man1/runapp.1
 
-.PHONY: all clean install uninstall $(modes)
+.PHONY: all clean install lint uninstall $(modes)
 .DELETE_ON_ERROR:
