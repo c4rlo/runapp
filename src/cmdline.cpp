@@ -123,7 +123,7 @@ std::optional<CmdlineArgs> parseArgs(int argc, char* argv[])
             }
             break;
         case 'e':
-            if (!std::string_view(optarg).contains('=')) {
+            if (std::string_view(optarg).find('=', 1) == std::string_view::npos) {
                 printErr("-e/--env argument must be of the form VAR=VALUE");
                 return {};
             }
